@@ -11,7 +11,9 @@ repository = "https://github.com/barafael/sleepy"
 [workspace.dependencies]
 sleepy-core = { path = "crates/sleepy-core", version = "0.1.0" }
 anyhow = "1"
+crossterm = "0.29"
 humantime = "2.4"
+ratatui = "0.30"
 
 [profile.release]
 opt-level = 3

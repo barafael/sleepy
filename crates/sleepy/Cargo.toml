@@ -8,3 +8,6 @@ repository.workspace = true
 
 [dependencies]
 sleepy-core = { workspace = true }
+anyhow = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }

@@ -56,7 +56,11 @@ pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
 /// platform has no command for the action.
 pub fn describe(action: SleepAction) -> Option<String> {
     let (program, args) = command_for(action)?;
-    Some(format!("{program} {}", args.join(" ")).trim_end().to_string())
+    Some(
+        format!("{program} {}", args.join(" "))
+            .trim_end()
+            .to_string(),
+    )
 }
 
 /// Puts the machine to sleep now.
@@ -91,12 +95,12 @@ pub enum Error {
     /// This platform has no command for this action.
     Unsupported(SleepAction),
     /// The command exists but could not be started.
-    Spawn {
-        program: String,
-        source: io::Error,
-    },
+    Spawn { program: String, source: io::Error },
     /// The command ran and said no.
-    Refused { action: SleepAction, program: String },
+    Refused {
+        action: SleepAction,
+        program: String,
+    },
 }
 
 impl fmt::Display for Error {
