@@ -1,0 +1,10 @@
+[package]
+name = "sleepy"
+description = "Put the machine to sleep after a while, from the terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sleepy-core = { workspace = true }

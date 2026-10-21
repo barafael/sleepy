@@ -1,0 +1,10 @@
+[package]
+name = "sleepy-core"
+description = "The sleep timer behind sleepy's frontends: what the machine can do, and when to do it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+humantime = { workspace = true }
