@@ -1,0 +1,656 @@
+<!doctype html>
+<!--
+  sleepy's web demo: the window's three blocks - the mode, the when, the
+  countdown - over a status bar of key hints, transliterated from egui to
+  HTML. The web cannot sleep the machine, so the one mode on offer sends a
+  notification when the countdown ends; and the keep-awake toggle, which
+  holds off screen blanking in the native apps, holds a Wake Lock here.
+  The when-grammar, the timer and the palettes are sleepy-core's own,
+  ported by hand; no dependencies, no build.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sleepy - web demo</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💤</text></svg>">
+<style>
+/* Gruvbox, exactly as sleepy-ui/theme.rs wears it. */
+:root[data-theme="dark"] {
+  --bg: #1d2021; --surface: #32302f; --stripe: #282828; --hover: #504945;
+  --border: #665c54; --text: #ebdbb2; --strong: #fbf1c7; --weak: #bdae93;
+  --accent: #fe8019; --on-accent: #1d2021; --label: #8ec07c;
+  --green: #b8bb26; --red: #fb4934; --yellow: #fabd2f;
+}
+:root[data-theme="light"] {
+  --bg: #fbf1c7; --surface: #ebdbb2; --stripe: #f2e5bc; --hover: #d5c4a1;
+  --border: #bdae93; --text: #3c3836; --strong: #1d2021; --weak: #665c54;
+  --accent: #af3a03; --on-accent: #fbf1c7; --label: #427b58;
+  --green: #79740e; --red: #9d0006; --yellow: #b57614;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; padding: 0 10px 10px; max-width: 760px; min-height: 100vh;
+  background: var(--bg); color: var(--text);
+  font: 15px/1.5 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  display: flex; flex-direction: column;
+}
+header {
+  display: flex; align-items: baseline; gap: 10px; padding: 12px 0 8px;
+  flex-wrap: wrap;
+}
+header h1 { font-size: 22px; margin: 0; color: var(--accent); }
+header .version { color: var(--weak); }
+header .tagline { font-style: italic; color: var(--weak); }
+header .spacer { flex: 1; }
+#status { color: var(--weak); }
+#status.counting { color: var(--green); }
+#status.paused { color: var(--yellow); }
+#status.fired { color: var(--accent); }
+#theme {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: inherit; padding: 0 8px; cursor: pointer;
+}
+#theme:hover { border-color: var(--accent); }
+.cols { display: flex; gap: 10px; align-items: stretch; }
+section { min-width: 0; }
+.mode { width: 190px; flex: none; }
+.when { flex: 1; }
+/* The full-width bar titling a block; accent when the keyboard is there. */
+.bar {
+  display: flex; justify-content: space-between; align-items: baseline;
+  background: var(--surface); color: var(--strong);
+  padding: 4px 10px; margin-bottom: 8px; font-size: 17px;
+}
+.bar .sub { font-size: 13px; color: var(--weak); }
+.bar.focus { background: var(--accent); color: var(--on-accent); }
+.bar.focus .sub { color: var(--on-accent); }
+/* The mode list: one line, highlighted, as the terminal draws it. */
+.modes .row { padding: 2px 6px; white-space: pre; }
+.modes .row.selected { background: var(--accent); color: var(--on-accent); font-weight: bold; }
+input#when {
+  width: 100%; background: var(--bg); color: var(--strong);
+  border: 1px solid var(--border); font: inherit; padding: 4px 8px;
+}
+input#when:focus { outline: none; border-color: var(--accent); }
+input#when::placeholder { color: var(--weak); }
+#echo { min-height: 1.5em; color: var(--weak); }
+#echo.error { color: var(--red); }
+.toggles, .buttons { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
+button {
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  font: inherit; padding: 2px 10px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.4; cursor: default; }
+button.toggle { background: none; border: none; padding: 2px 0; }
+button.toggle.on { color: var(--accent); }
+.countdown { margin-top: 12px; }
+#headline { font-weight: bold; color: var(--strong); min-height: 1.5em; }
+#headline.fired { font-size: 24px; color: var(--accent); }
+#headline .note { font-weight: normal; color: var(--weak); }
+#progress {
+  position: relative; height: 22px; border: 1px solid var(--border);
+  margin-top: 6px; display: none;
+}
+#progress .fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+#progress .label {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--strong); font-size: 13px;
+}
+footer {
+  margin-top: auto; padding-top: 10px; border-top: 1px solid var(--stripe);
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+}
+#typing { display: none; }
+#typing .what { background: var(--accent); color: var(--on-accent); padding: 0 4px; }
+#typing .what::after { content: "▏"; }
+#notes { color: var(--yellow); }
+#notes.error { color: var(--red); }
+.hint { cursor: default; opacity: 0.4; }
+.hint.live { opacity: 1; cursor: pointer; }
+.hint .cap {
+  background: var(--hover); color: var(--accent); padding: 0 5px;
+  transition: background 0.4s, color 0.4s;
+}
+.hint.pulse .cap { background: var(--accent); color: var(--on-accent); transition: none; }
+.hint.live:hover .word { text-decoration: underline; }
+#credit { width: 100%; color: var(--weak); font-size: 13px; }
+#credit a { color: var(--label); }
+</style>
+</head>
+<body>
+<header>
+  <h1>sleepy</h1>
+  <span class="version">web demo</span>
+  <span class="tagline">Count down; send a notification when the time comes.</span>
+  <span class="spacer"></span>
+  <span id="status">idle</span>
+  <button id="theme" title="dark or light">◐</button>
+</header>
+
+<main>
+  <div class="cols">
+    <section class="mode">
+      <div class="bar" id="bar-mode">mode<span class="sub"></span></div>
+      <div class="modes"><div class="row selected">&gt; notify</div></div>
+    </section>
+    <section class="when">
+      <div class="bar" id="bar-when">when<span class="sub"></span></div>
+      <input id="when" placeholder="45s, 30 min, 1h30m, 23:45" spellcheck="false" autocomplete="off">
+      <div id="echo"></div>
+      <div class="toggles">
+        <button class="toggle" id="keep" title="hold off screen blanking while this page is open">[ ] keep screen on</button>
+      </div>
+      <div class="buttons">
+        <button id="arm">arm</button>
+        <button id="pause">pause</button>
+        <button id="resume">resume</button>
+        <button id="abort">abort</button>
+      </div>
+      <div class="buttons">
+        <button id="shorter">-1 min</button>
+        <button id="longer">+1 min</button>
+      </div>
+    </section>
+  </div>
+
+  <section class="countdown">
+    <div class="bar" id="bar-count">countdown<span class="sub"></span></div>
+    <div id="headline"></div>
+    <div id="progress"><div class="fill"></div><span class="label"></span></div>
+  </section>
+</main>
+
+<footer>
+  <span id="typing"><span class="what" id="typing-echo"></span></span>
+  <span id="notes"></span>
+  <span class="hint" data-cmd="arm"><span class="cap">enter</span> <span class="word">arm</span></span>
+  <span class="hint" data-cmd="pause"><span class="cap">space</span> <span class="word">pause</span></span>
+  <span class="hint" data-cmd="abort"><span class="cap">esc</span> <span class="word">abort</span></span>
+  <span class="hint" data-cmd="minute"><span class="cap">+/-</span> <span class="word">minute</span></span>
+  <span class="hint" data-cmd="keep"><span class="cap">k</span> <span class="word">keep awake</span></span>
+  <span id="credit">the web demo of <a href="https://github.com/barafael/sleepy">sleepy</a>, which sleeps the machine itself; this page cannot, so it notifies instead.</span>
+</footer>
+
+<script>
+"use strict";
+
+/* sleepy-core's input.rs, by hand: the two grammars that share the field. */
+
+/* humantime's unit words, exactly as humantime matches them - case
+   included: `M` is months, `m` is minutes, and `H` is nothing at all. */
+const UNIT_WORDS = [
+  "nanos", "nsec", "ns",
+  "usec", "us", "µs",
+  "millis", "msec", "ms",
+  "seconds", "second", "secs", "sec", "s",
+  "minutes", "minute", "min", "mins", "m",
+  "hours", "hour", "hr", "hrs", "h",
+  "days", "day", "d",
+  "weeks", "week", "wk", "wks", "w",
+  "months", "month", "M",
+  "years", "year", "yr", "yrs", "y",
+];
+const UNIT_SECONDS = Object.fromEntries([
+  ...["nanos", "nsec", "ns"].map((u) => [u, 1e-9]),
+  ...["usec", "us", "µs"].map((u) => [u, 1e-6]),
+  ...["millis", "msec", "ms"].map((u) => [u, 1e-3]),
+  ...["seconds", "second", "secs", "sec", "s"].map((u) => [u, 1]),
+  ...["minutes", "minute", "min", "mins", "m"].map((u) => [u, 60]),
+  ...["hours", "hour", "hr", "hrs", "h"].map((u) => [u, 3600]),
+  ...["days", "day", "d"].map((u) => [u, 86400]),
+  ...["weeks", "week", "wk", "wks", "w"].map((u) => [u, 604800]),
+  ...["months", "month", "M"].map((u) => [u, 30 * 86400]),
+  ...["years", "year", "yr", "yrs", "y"].map((u) => [u, 365 * 86400]),
+]);
+
+const isDigit = (c) => c >= "0" && c <= "9";
+const isSpace = (c) => /\s/.test(c);
+const isLetter = (c) => /[a-zA-Zµ]/.test(c);
+
+/* The field's refusals, worded as ParseError words them. */
+const ERRORS = {
+  empty: "type a time, e.g. 30 min or 23:45",
+  invalid: "not a duration; try 45s, 30 min, 1h30m",
+  zero: "that would sleep immediately; type more than 0",
+  clock: "not a clock time; try 23:45, from 0:00 to 23:59:59",
+};
+
+/* humantime's grammar: number-unit pairs, whitespace skipped inside
+   numbers - `3 0 m` really is thirty minutes - and every number wearing
+   a unit humantime knows. Returns seconds, or an error key. */
+function parseDuration(text) {
+  text = text.trim();
+  if (!text) return { error: "empty" };
+  let total = 0;
+  let i = 0;
+  while (i < text.length) {
+    while (i < text.length && isSpace(text[i])) i++;
+    if (i >= text.length) break;
+    let digits = "";
+    while (i < text.length && (isDigit(text[i]) || isSpace(text[i]))) {
+      if (isDigit(text[i])) digits += text[i];
+      i++;
+    }
+    if (!digits) return { error: "invalid" };
+    if (text[i] === ".") {
+      i++;
+      let fraction = "";
+      while (i < text.length && (isDigit(text[i]) || isSpace(text[i]))) {
+        if (isDigit(text[i])) fraction += text[i];
+        i++;
+      }
+      digits += "." + fraction;
+    }
+    while (i < text.length && isSpace(text[i])) i++;
+    let unit = "";
+    while (i < text.length && isLetter(text[i])) unit += text[i++];
+    if (!(unit in UNIT_SECONDS)) return { error: "invalid" };
+    total += Number(digits) * UNIT_SECONDS[unit];
+  }
+  if (!(total > 0)) return { error: "zero" };
+  return { seconds: total };
+}
+
+/* The clock's own grammar: `HH:MM` or `HH:MM:SS`, one or two digits per
+   part, each part inside its range. */
+function parseClock(text) {
+  const parts = text.split(":");
+  if (parts.length < 2 || parts.length > 3) return null;
+  const number = (part) =>
+    part && part.length <= 2 && [...part].every(isDigit) ? Number(part) : null;
+  const hour = number(parts[0]);
+  const minute = number(parts[1]);
+  const second = parts.length === 3 ? number(parts[2]) : 0;
+  if (hour === null || minute === null || second === null) return null;
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  return { hour, minute, second };
+}
+
+/* A when: the clock's answer if the text wears the clock's shape,
+   humantime's otherwise. */
+function parseWhen(input) {
+  const text = input.trim();
+  if (text.includes(":")) {
+    const time = parseClock(text);
+    return time ? { at: time } : { error: "clock" };
+  }
+  return parseDuration(text);
+}
+
+/* is_when_prefix, both state machines, kept quirk for quirk: the field
+   holds nothing no when could wear. */
+function isWhenPrefix(typed) {
+  return typed.includes(":") ? isClockPrefix(typed) : isDurationPrefix(typed);
+}
+
+function isClockPrefix(typed) {
+  const parts = typed.split(":");
+  if (parts.length > 3) return false;
+  const fits = (part, limit) =>
+    part !== "" &&
+    part.length <= 2 &&
+    [...part].every(isDigit) &&
+    Number(part) <= limit;
+  return parts.every((part, index) =>
+    index === 0
+      ? part !== "" && fits(part, 23)
+      : (part === "" && index === parts.length - 1) || fits(part, 59)
+  );
+}
+
+function isDurationPrefix(typed) {
+  const startsAUnit = (unit) => UNIT_WORDS.some((word) => word.startsWith(unit));
+  // Where humantime's parser would be, having read the text so far.
+  let at = "start";
+  let unit = "";
+  for (const c of typed) {
+    if (at === "start" && isSpace(c)) continue;
+    if (at === "start" && isDigit(c)) { at = "number"; continue; }
+    if (at === "number" && (isDigit(c) || isSpace(c))) continue;
+    if (at === "number" && c === ".") { at = "point"; continue; }
+    if ((at === "number" || at === "fraction") && isLetter(c)) {
+      unit = c;
+      if (!startsAUnit(unit)) return false;
+      at = "unit";
+      continue;
+    }
+    if (at === "point" && isSpace(c)) continue;
+    if (at === "point" && isDigit(c)) { at = "fraction"; continue; }
+    if (at === "fraction" && (isDigit(c) || isSpace(c))) continue;
+    if (at === "unit" && isLetter(c)) {
+      unit += c;
+      if (!startsAUnit(unit)) return false;
+      continue;
+    }
+    // Whitespace or a digit seals the word: it must be a whole unit now.
+    if (at === "unit" && (isSpace(c) || isDigit(c))) {
+      if (!UNIT_WORDS.includes(unit)) return false;
+      unit = "";
+      at = isSpace(c) ? "between" : "number";
+      continue;
+    }
+    if (at === "between" && isSpace(c)) continue;
+    if (at === "between" && isDigit(c)) { at = "number"; continue; }
+    return false;
+  }
+  return true;
+}
+
+/* The next instant strictly after now at which the wall clock reads the
+   target: today if it has not gone by, tomorrow if it has. */
+function nextOccurrence(time, now) {
+  const at = new Date(now);
+  at.setHours(time.hour, time.minute, time.second, 0);
+  if (at <= now) at.setDate(at.getDate() + 1);
+  return at;
+}
+
+/* humantime's format_duration: the first unit that fits and the next
+   nonzero one after it, two at the most. */
+const FORMAT_UNITS = [
+  [86400, "day", "days"], [3600, "h", "h"], [60, "min", "min"],
+  [1, "s", "s"], [1e-3, "ms", "ms"], [1e-6, "µs", "µs"], [1e-9, "ns", "ns"],
+];
+function formatDuration(seconds) {
+  if (seconds <= 0) return "0s";
+  const parts = [];
+  for (const [size, name, plural] of FORMAT_UNITS) {
+    if (parts.length === 2) break;
+    if (seconds < size) continue;
+    const value = Math.floor(seconds / size);
+    seconds -= value * size;
+    parts.push(`${value}${value === 1 ? name : plural}`);
+  }
+  return parts.join(" ") || "0s";
+}
+
+/* The wall clock's own answer for an instant - `23:45`. */
+function formatClock(at) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
+/* sleepy-core's timer.rs: a state machine the frontend ticks; seconds
+   are floats here, whole seconds on the display. */
+const NUDGE = 60;
+const timer = { status: "idle", total: 0, remaining: 0, last: null };
+
+function tick() {
+  if (timer.status !== "armed") return;
+  const now = performance.now() / 1000;
+  if (timer.last === null) { timer.last = now; return; }
+  timer.remaining = Math.max(0, timer.remaining - Math.max(0, now - timer.last));
+  timer.last = now;
+  if (timer.remaining <= 0) {
+    timer.status = "fired";
+    timer.remaining = 0;
+    fire();
+  }
+}
+
+function arm(seconds) {
+  if (!(seconds > 0)) return false;
+  timer.total = seconds;
+  timer.remaining = seconds;
+  timer.status = "armed";
+  timer.last = null;
+  return true;
+}
+
+const counting = () => timer.status === "armed" || timer.status === "paused";
+
+/* The web's one mode: a notification, asked for when the countdown is
+   armed and sent when it ends. */
+let firedNote = "";
+function fire() {
+  document.title = "⏰ time! - sleepy";
+  if (!("Notification" in window)) {
+    firedNote = "this browser knows no notifications";
+  } else if (Notification.permission === "granted") {
+    new Notification("sleepy", { body: "time! the countdown ended." });
+    firedNote = "notification sent";
+  } else {
+    firedNote = "notifications are blocked - allow them, then arm again";
+  }
+}
+
+/* The keep-awake toggle, held by the Wake Lock API for as long as the
+   page is open and the box is checked. */
+const supports = { wakeLock: "wakeLock" in navigator, notify: "Notification" in window };
+let wakeLock = null;
+async function holdScreen() {
+  if (state.keepScreenOn && supports.wakeLock && !wakeLock) {
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } catch {
+      wakeLock = null;
+    }
+  } else if (!state.keepScreenOn && wakeLock) {
+    await wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+  renderNotes();
+}
+// A hidden tab loses its lock; a visible one takes it back.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") holdScreen();
+});
+
+/* The controller: one apply, so a key means the same as a click. */
+const state = { input: "", keepScreenOn: false };
+const input = document.getElementById("when");
+
+function apply(command) {
+  switch (command) {
+    case "arm":
+      // A running countdown is never silently replaced.
+      if (counting()) break;
+      {
+        const when = parseWhen(state.input);
+        if (when.error) break;
+        const seconds = when.at
+          ? Math.ceil((nextOccurrence(when.at, new Date()) - Date.now()) / 1000)
+          : when.seconds;
+        if (!arm(seconds)) break;
+        firedNote = "";
+        document.title = "sleepy - web demo";
+        // Ask to notify at the moment the user commits to a countdown.
+        if (supports.notify && Notification.permission === "default") {
+          Notification.requestPermission();
+        }
+      }
+      break;
+    case "pause":
+      if (timer.status === "armed") timer.status = "paused";
+      else if (timer.status === "paused") { timer.status = "armed"; timer.last = null; }
+      break;
+    case "abort":
+      timer.status = "idle";
+      timer.remaining = 0;
+      timer.total = 0;
+      timer.last = null;
+      firedNote = "";
+      document.title = "sleepy - web demo";
+      break;
+    case "longer":
+    case "shorter":
+      if (counting()) {
+        timer.remaining = Math.min(
+          timer.total,
+          Math.max(0, timer.remaining + (command === "longer" ? NUDGE : -NUDGE))
+        );
+      }
+      break;
+    case "keep":
+      state.keepScreenOn = !state.keepScreenOn;
+      holdScreen();
+      break;
+  }
+  pulse(command);
+  render();
+}
+
+/* The field holds only what a when could still become: an edit that
+   completes no when is undone before it can mean anything. */
+input.addEventListener("input", () => {
+  if (isWhenPrefix(input.value)) state.input = input.value;
+  input.value = state.input;
+  render();
+});
+
+/* The window's keys, as sleepy-ui/command.rs takes them: what no when
+   wears is a command at any moment; space types while the field has the
+   keyboard and pauses once it does not. */
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const typing = document.activeElement === input;
+  const key = event.key;
+  if (key === "Enter") { event.preventDefault(); apply("arm"); }
+  else if (key === "Escape") {
+    if (counting() || timer.status === "fired") apply("abort");
+    else input.blur();
+  }
+  else if (key === "k" || key === "K") { event.preventDefault(); apply("keep"); }
+  else if (key === "+" || key === "=") { event.preventDefault(); apply("longer"); }
+  else if (key === "-") { event.preventDefault(); apply("shorter"); }
+  else if (key === " " && !typing) { event.preventDefault(); apply("pause"); }
+});
+
+for (const id of ["arm", "pause", "resume", "abort", "shorter", "longer", "keep"]) {
+  document.getElementById(id).addEventListener("click", () => {
+    apply({ arm: "arm", pause: "pause", resume: "pause", abort: "abort",
+            shorter: "shorter", longer: "longer", keep: "keep" }[id]);
+  });
+}
+
+/* The hint lights up when its command runs, as the window's pulses do. */
+function pulse(command) {
+  const name = command === "longer" || command === "shorter" ? "minute" : command;
+  const hint = document.querySelector(`.hint[data-cmd="${name}"]`);
+  if (!hint) return;
+  hint.classList.add("pulse");
+  setTimeout(() => hint.classList.remove("pulse"), 400);
+}
+for (const hint of document.querySelectorAll(".hint.live, .hint")) {
+  hint.addEventListener("click", () => {
+    if (hint.classList.contains("live")) {
+      apply(hint.dataset.cmd === "minute" ? "longer" : hint.dataset.cmd);
+    }
+  });
+}
+
+/* The standing warnings: what this browser cannot do. */
+function renderNotes() {
+  const notes = document.getElementById("notes");
+  const problems = [];
+  if (state.keepScreenOn && !supports.wakeLock) problems.push("this browser cannot hold the screen awake");
+  if (supports.notify && Notification.permission === "denied") problems.push("notifications are blocked in this browser");
+  notes.textContent = problems.join("; ");
+  notes.classList.toggle("error", supports.notify && Notification.permission === "denied");
+}
+
+/* Drawing, block by block, as sleepy-ui/ui.rs renders them. */
+const $ = (id) => document.getElementById(id);
+
+function render() {
+  const typing = document.activeElement === input;
+  const active = counting();
+
+  const status = $("status");
+  status.textContent = { idle: "idle", armed: "counting", paused: "paused", fired: "fired" }[timer.status];
+  status.className = { idle: "", armed: "counting", paused: "paused", fired: "fired" }[timer.status];
+
+  // The accent bar says where the keyboard currently goes.
+  $("bar-mode").classList.toggle("focus", !typing);
+  $("bar-when").classList.toggle("focus", typing);
+  $("bar-count").classList.toggle("focus", active);
+
+  const when = parseWhen(state.input);
+  const echo = $("echo");
+  if (when.error) { echo.textContent = ERRORS[when.error]; echo.classList.add("error"); }
+  else if (when.at) {
+    const pad = (n) => String(n).padStart(2, "0");
+    echo.textContent = `-> at ${pad(when.at.hour)}:${pad(when.at.minute)}`;
+    echo.classList.remove("error");
+  } else {
+    echo.textContent = `-> in ${formatDuration(when.seconds)}`;
+    echo.classList.remove("error");
+  }
+
+  const keep = $("keep");
+  keep.textContent = `[${state.keepScreenOn ? "x" : " "}] keep screen on`;
+  keep.classList.toggle("on", state.keepScreenOn);
+
+  $("arm").disabled = active || !!when.error;
+  $("pause").disabled = timer.status !== "armed";
+  $("resume").disabled = timer.status !== "paused";
+  $("abort").disabled = !active && timer.status !== "fired";
+  $("shorter").disabled = !active;
+  $("longer").disabled = !active;
+
+  const headline = $("headline");
+  const progress = $("progress");
+  headline.classList.remove("fired");
+  if (timer.status === "idle") {
+    headline.innerHTML = '<span class="note">press enter to arm the notify countdown</span>';
+    progress.style.display = "none";
+  } else if (active) {
+    const left = formatDuration(Math.floor(timer.remaining));
+    const deadline = timer.status === "armed"
+      ? new Date(Date.now() + timer.remaining * 1000) : null;
+    headline.textContent = timer.status === "paused"
+      ? `paused, ${left} left - press space to resume`
+      : `notify in ${left}, at ${formatClock(deadline)}`;
+    progress.style.display = "block";
+    progress.querySelector(".fill").style.width =
+      `${(100 * (timer.total - timer.remaining)) / timer.total}%`;
+    progress.querySelector(".label").textContent = left;
+  } else {
+    headline.classList.add("fired");
+    headline.innerHTML = `time! notify... <span class="note">${firedNote}</span>`;
+    progress.style.display = "none";
+  }
+
+  // The field, echoed while it has the keyboard, as the window does.
+  $("typing").style.display = typing ? "" : "none";
+  $("typing-echo").textContent = ` ${state.input} `;
+
+  const live = {
+    arm: !active,
+    pause: active,
+    abort: active || timer.status === "fired",
+    minute: active,
+    keep: true,
+  };
+  for (const hint of document.querySelectorAll(".hint")) {
+    hint.classList.toggle("live", !!live[hint.dataset.cmd]);
+  }
+  document.querySelector('.hint[data-cmd="abort"] .word').textContent =
+    active ? "abort" : "clear";
+
+  renderNotes();
+}
+
+/* The theme: whichever the machine prefers, and the button's choice
+   kept for the next visit. */
+const saved = localStorage.getItem("sleepy-theme");
+if (saved) document.documentElement.dataset.theme = saved;
+else if (!window.matchMedia("(prefers-color-scheme: dark)").matches) {
+  document.documentElement.dataset.theme = "light";
+}
+$("theme").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("sleepy-theme", next);
+});
+
+// Like the terminal, where the field has the keyboard from the first frame.
+input.focus();
+render();
+setInterval(() => { tick(); render(); }, 200);
+</script>
+</body>
+</html>

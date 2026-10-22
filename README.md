@@ -11,6 +11,11 @@ counts down for real and then only says what it would have run.
 can watch something until the moment comes. Two frontends share one core: a
 terminal app and a window.
 
+And a [web demo](https://barafael.github.io/sleepy/) shares the countdown:
+the same when-grammar and the same keys, which cannot sleep the machine and
+so sends a notification when the time comes - and, in place of the screen
+guard, a Wake Lock that holds the display awake while the page is open.
+
 ## Crates
 
 | Crate | What it is |
