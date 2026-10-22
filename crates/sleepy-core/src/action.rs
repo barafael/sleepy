@@ -52,6 +52,19 @@ impl SleepAction {
         }
     }
 
+    /// The logind D-Bus method that answers whether this can happen now.
+    ///
+    /// systemd 262 removed the `systemctl can-...` verbs, pointing at these
+    /// methods instead; logind has answered them all along.
+    pub fn method(self) -> &'static str {
+        match self {
+            Self::Suspend => "CanSleep",
+            Self::Hibernate => "CanHibernate",
+            Self::HybridSleep => "CanHybridSleep",
+            Self::SuspendThenHibernate => "CanSuspendThenHibernate",
+        }
+    }
+
     /// Finds an action by the name the user typed (`hibernate`,
     /// `hybrid-sleep`, ...).
     pub fn from_name(name: &str) -> Option<Self> {
@@ -62,72 +75,106 @@ impl SleepAction {
 /// Answers "can this machine perform `action` right now?".
 ///
 /// A trait so the listing logic can be tested with a fake, and so a frontend
-/// could bring its own answer.
+/// could bring its own answer. A probe that has no opinion returns `None`,
+/// which lets [`detect_with`] ask the next one.
 pub trait Probe {
-    fn can(&self, action: SleepAction) -> bool;
+    /// `Some(true)` can, `Some(false)` cannot, `None` no idea.
+    fn can(&self, action: SleepAction) -> Option<bool>;
 }
 
 impl Probe for Vec<SleepAction> {
-    fn can(&self, action: SleepAction) -> bool {
-        self.contains(&action)
+    fn can(&self, action: SleepAction) -> Option<bool> {
+        Some(self.contains(&action))
     }
 }
 
-/// The actions a [`Probe`] reports, in display order.
-pub fn detect_with(probe: &dyn Probe) -> Vec<SleepAction> {
+/// The actions the probes report, in display order.
+///
+/// For each action, the first probe with an opinion decides - so a cascade
+/// goes from most specific to least, ending in a probe that always answers.
+pub fn detect_with(probes: &[&dyn Probe]) -> Vec<SleepAction> {
     SleepAction::ALL
         .into_iter()
-        .filter(|action| probe.can(*action))
+        .filter(|action| probes.iter().find_map(|probe| probe.can(*action)) == Some(true))
         .collect()
 }
 
 /// The actions this machine can perform, in display order.
 pub fn detect() -> Vec<SleepAction> {
     #[cfg(target_os = "linux")]
-    if Systemctl::present() {
-        return detect_with(&Systemctl);
-    }
-    // A machine without systemd to ask (or without a terminal program that
-    // knows the answer) gets the assumptions in `Fallback` rather than an
-    // empty list.
-    detect_with(&Fallback)
+    let probes: [&dyn Probe; 3] = [&Logind, &Systemctl, &Fallback];
+    #[cfg(not(target_os = "linux"))]
+    let probes: [&dyn Probe; 1] = [&Fallback];
+    // A machine where nobody can answer (no logind, no systemctl) gets the
+    // assumptions in `Fallback` rather than an empty list.
+    detect_with(&probes)
 }
 
-/// Asks systemd, which owns the sleep machinery on most Linux machines.
+/// Asks logind over D-Bus, the way systemd 262 wants you to.
+///
+/// `busctl call org.freedesktop.login1 ... CanSleep` answers `s "yes"`; if
+/// busctl or logind is missing the call fails and we shrug.
+#[cfg(target_os = "linux")]
+pub struct Logind;
+
+#[cfg(target_os = "linux")]
+impl Probe for Logind {
+    fn can(&self, action: SleepAction) -> Option<bool> {
+        let reply = Command::new("busctl")
+            .args([
+                "call",
+                "org.freedesktop.login1",
+                "/org/freedesktop/login1",
+                "org.freedesktop.login1.Manager",
+                action.method(),
+            ])
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())?;
+        possible(reply_word(&reply))
+    }
+}
+
+/// Asks systemd the old way, for the benefit of machines whose systemd
+/// still has the `can-...` verbs (262 removed them, and answers the call
+/// with an error we read as a shrug).
 #[cfg(target_os = "linux")]
 pub struct Systemctl;
 
 #[cfg(target_os = "linux")]
-impl Systemctl {
-    /// Whether `systemctl` is around to be asked at all.
-    fn present() -> bool {
-        Command::new("systemctl")
-            .arg("--version")
-            .output()
-            .is_ok_and(|out| out.status.success())
-    }
-}
-
-#[cfg(target_os = "linux")]
 impl Probe for Systemctl {
-    fn can(&self, action: SleepAction) -> bool {
-        let answer = Command::new("systemctl")
+    fn can(&self, action: SleepAction) -> Option<bool> {
+        let reply = Command::new("systemctl")
             .arg(format!("can-{}", action.verb()))
             .output()
             .ok()
-            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
-        answer.as_deref().is_some_and(possible)
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())?;
+        possible(reply_word(&reply))
     }
 }
 
-/// Whether a `systemctl can-...` answer means the action can happen.
+/// The answer inside a reply: the word inside the first pair of quotes
+/// (busctl's `s "yes"`), or the whole reply when nothing is quoted
+/// (systemctl's bare `yes`).
+fn reply_word(reply: &str) -> &str {
+    reply.split('"').nth(1).unwrap_or(reply.trim())
+}
+
+/// Whether an answer word means the action can happen.
 ///
 /// systemd answers `yes` when it will just work, `challenge` when it will
 /// ask for a polkit password first, and `platform` when the firmware does it
-/// without systemd's help. All three can happen. `no`, `disabled`, `off`
-/// and friends cannot, and neither can an empty answer.
-fn possible(answer: &str) -> bool {
-    matches!(answer.trim(), "yes" | "challenge" | "platform")
+/// without systemd's help - all three can happen. `no`, `na` (not
+/// applicable), `disabled` and `off` cannot. Anything else is a word we do
+/// not know, which is a shrug, not a veto.
+fn possible(word: &str) -> Option<bool> {
+    match word.to_ascii_lowercase().as_str() {
+        "yes" | "challenge" | "platform" => Some(true),
+        "no" | "na" | "disabled" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 /// What to assume where there is no systemd to ask.
@@ -139,12 +186,13 @@ fn possible(answer: &str) -> bool {
 struct Fallback;
 
 impl Probe for Fallback {
-    fn can(&self, action: SleepAction) -> bool {
-        match action {
+    fn can(&self, action: SleepAction) -> Option<bool> {
+        let can = match action {
             SleepAction::Suspend => true,
             SleepAction::Hibernate => cfg!(target_os = "windows"),
             SleepAction::HybridSleep | SleepAction::SuspendThenHibernate => false,
-        }
+        };
+        Some(can)
     }
 }
 
@@ -161,26 +209,68 @@ mod tests {
     }
 
     #[test]
-    fn systemd_answers_are_read_as_systemd_means_them() {
-        for answer in ["yes", "challenge", "platform", "yes\n"] {
-            assert!(possible(answer), "{answer} should be possible");
+    fn every_action_has_a_logind_method() {
+        for action in SleepAction::ALL {
+            assert!(
+                action.method().starts_with("Can"),
+                "{} has no Can* method",
+                action.verb()
+            );
         }
-        for answer in ["no", "disabled", "off", "", "no\n"] {
-            assert!(!possible(answer), "{answer} should be impossible");
+    }
+
+    #[test]
+    fn answer_words_are_read_as_systemd_means_them() {
+        for word in ["yes", "challenge", "platform", "Yes", "CHALLENGE"] {
+            assert_eq!(possible(word), Some(true), "{word} should be possible");
         }
+        for word in ["no", "na", "disabled", "off"] {
+            assert_eq!(possible(word), Some(false), "{word} should be impossible");
+        }
+        for word in ["", "maybe", "banana"] {
+            assert_eq!(possible(word), None, "{word} is a shrug, not a veto");
+        }
+    }
+
+    #[test]
+    fn replies_are_unquoted_or_taken_whole() {
+        // busctl quotes its reply; systemctl did not.
+        assert_eq!(reply_word("s \"yes\"\n"), "yes");
+        assert_eq!(reply_word("yes\n"), "yes");
     }
 
     #[test]
     fn detection_keeps_display_order() {
         let probe = vec![SleepAction::HybridSleep, SleepAction::Suspend];
         assert_eq!(
-            detect_with(&probe),
+            detect_with(&[&probe]),
             [SleepAction::Suspend, SleepAction::HybridSleep]
         );
     }
 
     #[test]
     fn a_machine_that_answers_nothing_sleeps_not() {
-        assert!(detect_with(&Vec::new()).is_empty());
+        assert!(detect_with(&[&Vec::new()]).is_empty());
+    }
+
+    /// A probe with one fixed answer for every action, including a shrug.
+    struct Scripted(Option<bool>);
+
+    impl Probe for Scripted {
+        fn can(&self, _action: SleepAction) -> Option<bool> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn the_first_probe_with_an_opinion_decides() {
+        // The shrug steps aside for the probe that knows.
+        let knows = vec![SleepAction::Suspend];
+        assert_eq!(
+            detect_with(&[&Scripted(None), &knows]),
+            [SleepAction::Suspend]
+        );
+        // And the one that answers first is not overruled by the next.
+        assert_eq!(detect_with(&[&Scripted(Some(true)), &Vec::new()]).len(), 4);
     }
 }
