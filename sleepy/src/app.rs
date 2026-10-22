@@ -6,8 +6,42 @@
 //! editing that goes with it.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use sleepy_core::{Controller, NUDGE, Options, Status};
+use sleepy_core::{Command, Controller, Options, Status};
 use std::time::Instant;
+
+/// Which key means which command, in the terminal. What is not here is
+/// the field's own: while it is being edited (idle), the plain
+/// characters - `d`, space, everything humantime reads - type into it.
+/// The window transliterates its own keys to the same commands; what a
+/// command does is core's, shared, so neither frontend can drift.
+fn command(key: KeyEvent, idle: bool) -> Option<Command> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('c') if ctrl => Some(Command::Quit),
+        KeyCode::Char('q') if !ctrl => Some(Command::Quit),
+        // The dry-run toggle is a safety valve that must work at any
+        // moment - flipping mid-countdown saves the machine without
+        // aborting the timer - so it rides on a chord no text field
+        // has a use for, leaving plain `d` to type: `2d` needs it.
+        KeyCode::Char('d') if ctrl => Some(Command::ToggleDryRun),
+        // `k` keeps the screen awake; it is no humantime letter, so
+        // typing loses nothing and it is a command at any moment.
+        KeyCode::Char('k') if !ctrl => Some(Command::ToggleKeepAwake),
+        KeyCode::Esc if !ctrl => Some(Command::Escape),
+        KeyCode::Up | KeyCode::BackTab if !ctrl => Some(Command::PreviousMode),
+        KeyCode::Down | KeyCode::Tab if !ctrl => Some(Command::NextMode),
+        // Arming waits for an idle countdown - `apply` is the one that
+        // says so, as it does in the window.
+        KeyCode::Enter if !ctrl => Some(Command::Arm),
+        // Space is humantime's separator, so while the field is being
+        // edited (idle) it is not a command but a character; once a
+        // countdown runs it pauses.
+        KeyCode::Char(' ') if !ctrl && !idle => Some(Command::PauseResume),
+        KeyCode::Char('+') | KeyCode::Char('=') if !ctrl => Some(Command::Longer),
+        KeyCode::Char('-') if !ctrl => Some(Command::Shorter),
+        _ => None,
+    }
+}
 
 /// The whole application state.
 #[derive(Debug)]
@@ -31,46 +65,21 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let idle = self.controller.timer.status() == Status::Idle;
-        match key.code {
-            KeyCode::Char('c') if ctrl => self.controller.quit(),
-            KeyCode::Char('q') => self.controller.quit(),
-            // The dry-run toggle is a safety valve that must work at any
-            // moment - flipping mid-countdown saves the machine without
-            // aborting the timer - so it rides on a chord no text field
-            // has a use for, leaving plain `d` to type: `2d` needs it.
-            KeyCode::Char('d') if ctrl => self.controller.toggle_backend(),
-            // `k` keeps the screen awake; it is no humantime letter, so
-            // typing loses nothing and it is a command at any moment.
-            KeyCode::Char('k') if !ctrl => self.controller.toggle_keep_screen_on(),
-            KeyCode::Esc => {
-                // Escape first saves the machine from sleep, and only a
-                // second press returns the shell.
-                if idle {
-                    self.controller.quit();
-                } else {
-                    self.controller.abort();
+        match command(key, idle) {
+            Some(command) => self.controller.apply(command),
+            // What is no command is the field's, while the field is
+            // being edited: the terminal's mini line editor is its own
+            // to drive, where the window leaves this to a real text
+            // field.
+            None if idle => match key.code {
+                KeyCode::Backspace => {
+                    self.controller.input.pop();
                 }
-            }
-            KeyCode::Up | KeyCode::BackTab => self.controller.move_selection(-1),
-            KeyCode::Down | KeyCode::Tab => self.controller.move_selection(1),
-            KeyCode::Enter if idle => {
-                self.controller.arm_selected();
-            }
-            KeyCode::Backspace if idle => {
-                self.controller.input.pop();
-            }
-            KeyCode::Char('u') if ctrl && idle => self.controller.input.clear(),
-            // Space is humantime's separator, so while the field is being
-            // edited (idle) it types; once a countdown runs it pauses.
-            KeyCode::Char(' ') if !idle => match self.controller.timer.status() {
-                Status::Armed => self.controller.timer.pause(),
-                Status::Paused => self.controller.timer.resume(),
-                Status::Idle | Status::Fired => {}
+                KeyCode::Char('u') if ctrl => self.controller.input.clear(),
+                KeyCode::Char(c) if !ctrl => self.controller.input.push(c),
+                _ => {}
             },
-            KeyCode::Char('+') | KeyCode::Char('=') => self.controller.timer.adjust(NUDGE),
-            KeyCode::Char('-') => self.controller.timer.adjust(-NUDGE),
-            KeyCode::Char(c) if !ctrl && idle => self.controller.input.push(c),
-            _ => {}
+            None => {}
         }
         !self.controller.running()
     }

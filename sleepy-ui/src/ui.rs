@@ -8,11 +8,11 @@
 //! keyboard currently goes.
 
 use crate::app::SleepyApp;
-use crate::command::{self, Command};
+use crate::command;
 use crate::theme;
 use egui::{Align, Color32, CursorIcon, Label, Layout, Response, RichText, Sense, TextStyle, Ui};
 use humantime::format_duration;
-use sleepy_core::{Backend, Status, describe};
+use sleepy_core::{Backend, Command, Status, describe};
 use std::time::Duration;
 
 /// Horizontal gap between unrelated items.

@@ -1,34 +1,12 @@
-//! The commands the window answers to, from the keyboard or a clicked
-//! key hint - the terminal's keys, transliterated.
+//! How the window's keys become sleepy-core's commands, and how the same
+//! keys are drawn as clickable hints in the status bar.
 //!
 //! One table drives both: `take` turns key presses into commands, and
 //! `Hint::all` draws the same keys in the status bar, where clicking one
-//! stands in for pressing it.
+//! stands in for pressing it. What a command does is core's answer, not
+//! this file's; this one only transliterates.
 
-/// Anything the user can ask the window to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Command {
-    /// Move the mode highlight up.
-    PreviousMode,
-    /// Move the mode highlight down.
-    NextMode,
-    /// Switch between really sleeping and only saying so.
-    ToggleDryRun,
-    /// Switch the screen inhibition.
-    ToggleKeepAwake,
-    /// Start the countdown with the highlighted mode and typed duration.
-    Arm,
-    /// Pause a running countdown, or resume a paused one.
-    PauseResume,
-    /// Abort a countdown; when there is none, close the window.
-    Escape,
-    /// Put a minute back on the countdown.
-    Longer,
-    /// Take a minute off the countdown.
-    Shorter,
-    /// Close the window.
-    Quit,
-}
+use sleepy_core::Command;
 
 /// A key hint in the status bar: the keycap, what it does, and the command
 /// a click runs - `None` when the hint stands for more than one command,

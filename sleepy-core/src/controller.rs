@@ -10,6 +10,7 @@ use crate::action::SleepAction;
 use crate::awake::KeepAwake;
 use crate::backend::{Backend, Error, execute};
 use crate::cli::Options;
+use crate::command::Command;
 use crate::input::{ParseError, parse_duration};
 use crate::timer::{Event as TimerEvent, Status, Timer};
 use std::time::{Duration, Instant};
@@ -144,6 +145,43 @@ impl Controller {
         }
         let next = (isize::try_from(self.selected).unwrap_or(0) + step).rem_euclid(count);
         self.selected = usize::try_from(next).unwrap_or(0);
+    }
+
+    /// Runs one command. What a command *does* is decided here, once, so
+    /// a key means the same thing in the terminal as in the window; what
+    /// a key *is* stays each frontend's own business.
+    pub fn apply(&mut self, command: Command) {
+        let counting = matches!(self.timer.status(), Status::Armed | Status::Paused);
+        match command {
+            Command::PreviousMode => self.move_selection(-1),
+            Command::NextMode => self.move_selection(1),
+            Command::ToggleDryRun => self.toggle_backend(),
+            Command::ToggleKeepAwake => self.toggle_keep_screen_on(),
+            Command::Arm => {
+                // A running countdown is never silently replaced: arming
+                // waits for an idle (or finished) timer.
+                if !counting {
+                    self.arm_selected();
+                }
+            }
+            Command::PauseResume => match self.timer.status() {
+                Status::Armed => self.timer.pause(),
+                Status::Paused => self.timer.resume(),
+                Status::Idle | Status::Fired => {}
+            },
+            Command::Escape => {
+                // Escape first saves the machine from sleep, and only a
+                // second press - with nothing left to save - leaves.
+                if counting {
+                    self.abort();
+                } else {
+                    self.quit();
+                }
+            }
+            Command::Longer => self.timer.adjust(NUDGE),
+            Command::Shorter => self.timer.adjust(-NUDGE),
+            Command::Quit => self.quit(),
+        }
     }
 
     /// Gives up on the countdown; the machine stays awake and the report
@@ -289,5 +327,50 @@ mod tests {
         assert_eq!(controller.fired, Some(SleepAction::Suspend));
         // Fired is a one-time event; the frontend performs the action once.
         assert!(!controller.tick(Instant::now() + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn escape_saves_the_machine_before_it_leaves() {
+        let mut controller = controller();
+        controller.apply(Command::Arm);
+        assert_eq!(controller.timer.status(), Status::Armed);
+        // A running countdown is never silently replaced: a second arm
+        // waits, whatever the field says meanwhile.
+        let before = controller.timer.remaining();
+        controller.input = "1h".into();
+        controller.apply(Command::Arm);
+        assert_eq!(controller.timer.remaining(), before);
+        // Escape first saves the machine; only the second press leaves.
+        controller.apply(Command::Escape);
+        assert_eq!(controller.timer.status(), Status::Idle);
+        assert!(controller.running());
+        controller.apply(Command::Escape);
+        assert!(!controller.running());
+    }
+
+    #[test]
+    fn pause_resume_and_nudge_answer_a_countdown() {
+        let mut controller = controller();
+        controller.apply(Command::Arm);
+        controller.apply(Command::PauseResume);
+        assert_eq!(controller.timer.status(), Status::Paused);
+        controller.apply(Command::PauseResume);
+        assert_eq!(controller.timer.status(), Status::Armed);
+        let before = controller.timer.remaining();
+        // A fresh countdown sits at its total, where `+` can only be
+        // refused; a minute taken off can be put back.
+        controller.apply(Command::Longer);
+        assert_eq!(controller.timer.remaining(), before);
+        controller.apply(Command::Shorter);
+        assert_eq!(
+            controller.timer.remaining(),
+            before - Duration::from_secs(60)
+        );
+        controller.apply(Command::Longer);
+        assert_eq!(controller.timer.remaining(), before);
+        // Pausing an idle timer is nothing to do.
+        controller.abort();
+        controller.apply(Command::PauseResume);
+        assert_eq!(controller.timer.status(), Status::Idle);
     }
 }

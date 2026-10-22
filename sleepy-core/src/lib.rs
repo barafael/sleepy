@@ -7,12 +7,13 @@
 //! - [`backend`]: how do we do it? (and a dry run that only says so)
 //! - [`awake`]: how do we stay visible while we count? (and let go after)
 //!
-//! and two answers the frontends share, so the terminal and the window
+//! and three answers the frontends share, so the terminal and the window
 //! cannot drift apart:
 //!
 //! - [`cli`]: what the command line decided, parsed once and detected once;
-//! - [`controller`]: the state and the commands - what every frontend does
-//!   with the four answers above.
+//! - [`command`]: what the user can ask for - one vocabulary;
+//! - [`controller`]: the state and the answers - what every frontend does
+//!   with a command, one grammar.
 //!
 //! The frontends (`sleepy`, `sleepy-ui`) only draw the answers and forward
 //! the user's commands; every decision lives here, where it can be tested
@@ -22,6 +23,7 @@ pub mod action;
 pub mod awake;
 pub mod backend;
 pub mod cli;
+pub mod command;
 pub mod controller;
 pub mod input;
 pub mod timer;
@@ -30,6 +32,7 @@ pub use action::{Probe, SleepAction, detect, detect_with};
 pub use awake::KeepAwake;
 pub use backend::{Backend, Error, describe, execute};
 pub use cli::Options;
+pub use command::Command;
 pub use controller::{Controller, NUDGE};
 pub use input::{ParseError, parse_duration};
 pub use timer::{Event as TimerEvent, Status, Timer};

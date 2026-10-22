@@ -7,8 +7,8 @@
 //! when asked, and a window nobody is looking at must still fall asleep on
 //! time.
 
-use crate::command::{self, Command};
-use sleepy_core::{Controller, NUDGE, Options, Status};
+use crate::command;
+use sleepy_core::{Command, Controller, Options, Status};
 use std::time::{Duration, Instant};
 
 /// The heartbeat: a countdown that shows whole seconds needs four looks
@@ -56,44 +56,12 @@ impl SleepyApp {
     }
 
     /// Runs one command, from a key press or a clicked key hint, and notes
-    /// the moment so the hint can light up.
+    /// the moment so the hint can light up. What the command does is
+    /// core's answer - [`Controller::apply`] - the same one the terminal
+    /// gets.
     fn run(&mut self, command: Command) {
         self.pressed = Some((command, self.ctx.input(|i| i.time)));
-        let counting = matches!(
-            self.controller.timer.status(),
-            Status::Armed | Status::Paused
-        );
-        match command {
-            Command::PreviousMode => self.controller.move_selection(-1),
-            Command::NextMode => self.controller.move_selection(1),
-            Command::ToggleDryRun => self.controller.toggle_backend(),
-            Command::ToggleKeepAwake => self.controller.toggle_keep_screen_on(),
-            Command::Arm => {
-                // A running countdown is never silently replaced: arming
-                // waits for an idle (or finished) timer, like the
-                // terminal's enter and the disabled button.
-                if !counting {
-                    self.controller.arm_selected();
-                }
-            }
-            Command::PauseResume => match self.controller.timer.status() {
-                Status::Armed => self.controller.timer.pause(),
-                Status::Paused => self.controller.timer.resume(),
-                Status::Idle | Status::Fired => {}
-            },
-            Command::Escape => {
-                // Escape first saves the machine from sleep, and only a
-                // second press closes the window.
-                if counting {
-                    self.controller.abort();
-                } else {
-                    self.controller.quit();
-                }
-            }
-            Command::Longer => self.controller.timer.adjust(NUDGE),
-            Command::Shorter => self.controller.timer.adjust(-NUDGE),
-            Command::Quit => self.controller.quit(),
-        }
+        self.controller.apply(command);
     }
 }
 
