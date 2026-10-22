@@ -8,7 +8,7 @@
 //!
 //! [humantime]: https://docs.rs/humantime
 
-use std::{error, fmt, time::Duration};
+use std::time::Duration;
 
 /// Parses a duration from an input field.
 pub fn parse_duration(input: &str) -> Result<Duration, ParseError> {
@@ -24,34 +24,22 @@ pub fn parse_duration(input: &str) -> Result<Duration, ParseError> {
 }
 
 /// Why the input is not a duration yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// The message is the whole story: the frontends show it under the input
+/// field and the command line repeats it, so `thiserror` writes it once
+/// and `Display` is the hint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     /// Nothing was typed.
+    #[error("type a duration, e.g. 30 min")]
     Empty,
     /// Something was typed, but humantime does not know it.
+    #[error("not a duration; try 45s, 30 min, 1h30m")]
     Invalid,
     /// A duration of zero; the machine would sleep immediately.
+    #[error("that would sleep immediately; type more than 0")]
     Zero,
 }
-
-impl ParseError {
-    /// The hint to show under the input field.
-    pub fn hint(self) -> &'static str {
-        match self {
-            Self::Empty => "type a duration, e.g. 30 min",
-            Self::Invalid => "not a duration; try 45s, 30 min, 1h30m",
-            Self::Zero => "that would sleep immediately; type more than 0",
-        }
-    }
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.hint())
-    }
-}
-
-impl error::Error for ParseError {}
 
 #[cfg(test)]
 mod tests {

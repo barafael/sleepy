@@ -1,11 +1,18 @@
-//! The ways a machine can sleep, and what this one can actually do.
+//! The ways a machine can stop, and what this one can actually do.
 
 use std::process::Command;
+use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-/// A way to put the machine to sleep, listed from quickest to enter to most
-/// drastic. Which of these exist is up to the firmware and the operating
-/// system, so [`detect`] asks instead of assuming.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// A way to end the machine's day, listed from quickest to return from to
+/// most final. Which of these exist is up to the firmware and the
+/// operating system, so [`detect`] asks instead of assuming.
+///
+/// The words are systemd's, which double as sleepy's names for the modes
+/// on the command line; `strum` turns variant names into kebab-case, and
+/// `Shutdown` spells itself `poweroff` the way systemd does - while still
+/// answering to `shutdown`, the word a human reaches for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumString, Display, EnumIter)]
+#[strum(serialize_all = "kebab_case")]
 pub enum SleepAction {
     /// Suspend to RAM: fast to enter and to leave, but the machine must keep
     /// battery power while it sleeps.
@@ -20,55 +27,43 @@ pub enum SleepAction {
     /// Suspend now and hibernate after a delay: fast wake-up for short
     /// naps, and the battery is safe for long ones.
     SuspendThenHibernate,
+    /// Power off: the most final. Nothing survives; "waking up" means
+    /// booting again.
+    #[strum(to_string = "poweroff", serialize = "shutdown")]
+    Shutdown,
 }
 
 impl SleepAction {
-    /// Every action, in display order.
-    pub const ALL: [Self; 4] = [
-        Self::Suspend,
-        Self::Hibernate,
-        Self::HybridSleep,
-        Self::SuspendThenHibernate,
-    ];
-
     /// The name to show a human.
+    ///
+    /// A match rather than a derive: this is display copy - "suspend (to
+    /// RAM)" explains, it does not name - and copy is not a serialization.
+    /// The machine's own words come from `strum` above.
     pub fn label(self) -> &'static str {
         match self {
             Self::Suspend => "suspend (to RAM)",
             Self::Hibernate => "hibernate (to disk)",
             Self::HybridSleep => "hybrid sleep",
             Self::SuspendThenHibernate => "suspend, then hibernate",
-        }
-    }
-
-    /// The word systemd uses for it, which doubles as sleepy's own name for
-    /// it on the command line.
-    pub fn verb(self) -> &'static str {
-        match self {
-            Self::Suspend => "suspend",
-            Self::Hibernate => "hibernate",
-            Self::HybridSleep => "hybrid-sleep",
-            Self::SuspendThenHibernate => "suspend-then-hibernate",
+            Self::Shutdown => "shutdown (power off)",
         }
     }
 
     /// The logind D-Bus method that answers whether this can happen now.
     ///
     /// systemd 262 removed the `systemctl can-...` verbs, pointing at these
-    /// methods instead; logind has answered them all along.
+    /// methods instead; logind has answered them all along. A match rather
+    /// than `Can` + name, because the mapping is irregular - `Suspend`
+    /// asks `CanSleep` and `Shutdown` asks `CanPowerOff` - and an
+    /// irregular mapping is what a match is for.
     pub fn method(self) -> &'static str {
         match self {
             Self::Suspend => "CanSleep",
             Self::Hibernate => "CanHibernate",
             Self::HybridSleep => "CanHybridSleep",
             Self::SuspendThenHibernate => "CanSuspendThenHibernate",
+            Self::Shutdown => "CanPowerOff",
         }
-    }
-
-    /// Finds an action by the name the user typed (`hibernate`,
-    /// `hybrid-sleep`, ...).
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|a| a.verb() == name)
     }
 }
 
@@ -93,8 +88,7 @@ impl Probe for Vec<SleepAction> {
 /// For each action, the first probe with an opinion decides - so a cascade
 /// goes from most specific to least, ending in a probe that always answers.
 pub fn detect_with(probes: &[&dyn Probe]) -> Vec<SleepAction> {
-    SleepAction::ALL
-        .into_iter()
+    SleepAction::iter()
         .filter(|action| probes.iter().find_map(|probe| probe.can(*action)) == Some(true))
         .collect()
 }
@@ -146,7 +140,7 @@ pub struct Systemctl;
 impl Probe for Systemctl {
     fn can(&self, action: SleepAction) -> Option<bool> {
         let reply = Command::new("systemctl")
-            .arg(format!("can-{}", action.verb()))
+            .arg(format!("can-{action}"))
             .output()
             .ok()
             .filter(|out| out.status.success())
@@ -181,14 +175,15 @@ fn possible(word: &str) -> Option<bool> {
 ///
 /// macOS suspends with `pmset sleepnow` and Windows with powrprof, and
 /// neither exposes per-action availability the way `systemctl can-...` does,
-/// so we offer what we know how to run: suspend everywhere, and hibernate on
-/// Windows, where it is a setting the user can turn on and we can ask for.
+/// so we offer what we know how to run: suspend and shut down everywhere,
+/// and hibernate on Windows, where it is a setting the user can turn on and
+/// we can ask for.
 struct Fallback;
 
 impl Probe for Fallback {
     fn can(&self, action: SleepAction) -> Option<bool> {
         let can = match action {
-            SleepAction::Suspend => true,
+            SleepAction::Suspend | SleepAction::Shutdown => true,
             SleepAction::Hibernate => cfg!(target_os = "windows"),
             SleepAction::HybridSleep | SleepAction::SuspendThenHibernate => false,
         };
@@ -201,20 +196,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_words_are_systemds() {
+        // Display is the command-line word, and `poweroff` is the one a
+        // case conversion would get wrong, so pin the whole list.
+        let words: Vec<String> = SleepAction::iter().map(|a| a.to_string()).collect();
+        assert_eq!(
+            words,
+            [
+                "suspend",
+                "hibernate",
+                "hybrid-sleep",
+                "suspend-then-hibernate",
+                "poweroff"
+            ]
+        );
+    }
+
+    #[test]
     fn names_round_trip() {
-        for action in SleepAction::ALL {
-            assert_eq!(SleepAction::from_name(action.verb()), Some(action));
+        for action in SleepAction::iter() {
+            assert_eq!(action.to_string().parse(), Ok(action));
         }
-        assert_eq!(SleepAction::from_name("nap-time"), None);
+        assert!("nap-time".parse::<SleepAction>().is_err());
+    }
+
+    #[test]
+    fn shutdown_answers_to_both_names() {
+        // systemd's word and the human one.
+        assert_eq!("poweroff".parse::<SleepAction>(), Ok(SleepAction::Shutdown));
+        assert_eq!("shutdown".parse::<SleepAction>(), Ok(SleepAction::Shutdown));
     }
 
     #[test]
     fn every_action_has_a_logind_method() {
-        for action in SleepAction::ALL {
+        for action in SleepAction::iter() {
             assert!(
                 action.method().starts_with("Can"),
-                "{} has no Can* method",
-                action.verb()
+                "{action} has no Can* method"
             );
         }
     }
@@ -271,6 +289,6 @@ mod tests {
             [SleepAction::Suspend]
         );
         // And the one that answers first is not overruled by the next.
-        assert_eq!(detect_with(&[&Scripted(Some(true)), &Vec::new()]).len(), 4);
+        assert_eq!(detect_with(&[&Scripted(Some(true)), &Vec::new()]).len(), 5);
     }
 }

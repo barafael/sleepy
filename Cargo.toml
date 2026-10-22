@@ -20,6 +20,8 @@ eframe = { version = "0.37", default-features = false, features = [
 egui = "0.37"
 humantime = "2.4"
 ratatui = "0.30"
+strum = { version = "0.28", features = ["derive"] }
+thiserror = "2"
 zbus = "5.19"
 
 [profile.release]

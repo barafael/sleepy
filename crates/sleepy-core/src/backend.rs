@@ -6,7 +6,7 @@
 //! ever touching the machine.
 
 use crate::action::SleepAction;
-use std::{error, fmt, io, process::Command};
+use std::{io, process::Command};
 
 /// Whether to touch the machine or only describe what would happen.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -25,12 +25,25 @@ pub enum Backend {
 /// and the tests can check it without sleeping anyone.
 pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
     if cfg!(target_os = "linux") {
-        // systemd takes the action's name as its verb, which is why
-        // `SleepAction::verb` is spelled the way it is.
-        Some(("systemctl".into(), vec![action.verb().into()]))
+        // systemd takes the action's word as its verb, which is why the
+        // `SleepAction` strings are spelled the way they are.
+        Some(("systemctl".into(), vec![action.to_string()]))
     } else if cfg!(target_os = "macos") {
-        // `pmset sleepnow` is the only sleep macOS exposes this way.
-        (action == SleepAction::Suspend).then(|| ("pmset".into(), vec!["sleepnow".into()]))
+        // `pmset sleepnow` is the only sleep macOS exposes this way;
+        // shutting down goes through AppleScript, which needs no sudo.
+        match action {
+            SleepAction::Suspend => Some(("pmset".into(), vec!["sleepnow".into()])),
+            SleepAction::Shutdown => Some((
+                "osascript".into(),
+                vec![
+                    "-e".into(),
+                    "tell application \"System Events\" to shut down".into(),
+                ],
+            )),
+            SleepAction::Hibernate
+            | SleepAction::HybridSleep
+            | SleepAction::SuspendThenHibernate => None,
+        }
     } else if cfg!(target_os = "windows") {
         // SetSuspendState's first argument picks suspend (0) or hibernate
         // (1); the others force the action and forbid wake-up. Note the
@@ -44,6 +57,10 @@ pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
             SleepAction::Hibernate => Some((
                 "rundll32.exe".into(),
                 vec!["powrprof.dll,SetSuspendState".into(), "1,1,0".into()],
+            )),
+            SleepAction::Shutdown => Some((
+                "shutdown".into(),
+                vec!["/s".into(), "/t".into(), "0".into()],
             )),
             SleepAction::HybridSleep | SleepAction::SuspendThenHibernate => None,
         }
@@ -90,42 +107,24 @@ pub fn execute(action: SleepAction, backend: Backend) -> Result<(), Error> {
 }
 
 /// Why the machine is still awake.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// This platform has no command for this action.
+    #[error("this machine has no command for {} ", .0.label())]
     Unsupported(SleepAction),
     /// The command exists but could not be started.
-    Spawn { program: String, source: io::Error },
+    #[error("cannot run {program}: {source}")]
+    Spawn {
+        program: String,
+        #[source]
+        source: io::Error,
+    },
     /// The command ran and said no.
+    #[error("{program} refused to {} (does the session allow it?)", .action.label())]
     Refused {
         action: SleepAction,
         program: String,
     },
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unsupported(action) => {
-                write!(f, "this machine has no command for {} ", action.label())
-            }
-            Self::Spawn { program, source } => write!(f, "cannot run {program}: {source}"),
-            Self::Refused { action, program } => write!(
-                f,
-                "{program} refused to {} (does the session allow it?)",
-                action.label()
-            ),
-        }
-    }
-}
-
-impl error::Error for Error {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match self {
-            Self::Spawn { source, .. } => Some(source),
-            _ => None,
-        }
-    }
 }
 
 // `io::Error` has no `PartialEq`, so compare the parts that matter: the
@@ -144,12 +143,13 @@ impl PartialEq for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strum::IntoEnumIterator;
 
     #[test]
     fn dry_run_never_touches_the_machine() {
         // Every action this platform knows, run through a dry fire: the
         // result must say nothing happened, and nothing must have happened.
-        for action in SleepAction::ALL {
+        for action in SleepAction::iter() {
             let result = execute(action, Backend::DryRun);
             match command_for(action) {
                 Some(_) => assert_eq!(result, Ok(()), "{action:?} should dry-fire"),
@@ -168,13 +168,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_asks_systemctl_with_the_action_as_verb() {
-        for action in SleepAction::ALL {
-            let (program, args) = command_for(action).expect("systemd knows all four");
+        for action in SleepAction::iter() {
+            let (program, args) = command_for(action).expect("systemd knows all five");
             assert_eq!(program, "systemctl");
-            assert_eq!(args, [action.verb()]);
+            assert_eq!(args, [action.to_string()]);
             assert_eq!(
                 describe(action).as_deref(),
-                Some(format!("systemctl {}", action.verb()).as_str())
+                Some(format!("systemctl {action}").as_str())
             );
         }
     }
