@@ -173,3 +173,142 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
+
+#[cfg(test)]
+// A test that cannot get its answer is broken, not a machine that said no.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::backend::TestBackend;
+    use sleepy_core::{Backend, Command, Options};
+
+    /// An app built by hand, so the tests never ask the machine what it
+    /// can do (`detect` would spawn processes here).
+    fn app() -> App {
+        App::new(Options {
+            backend: Backend::Real,
+            keep_screen_on: false,
+            when: None,
+            mode: None,
+            modes: vec![SleepAction::Suspend],
+        })
+    }
+
+    /// One frame, rendered to a screen of memory, as text. The pixels
+    /// stay the human's; the words are ours to check. Wide on purpose:
+    /// the footer carries every badge at once in one test, and a
+    /// Paragraph clips what overflows.
+    fn screen_of(app: &App) -> String {
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(160, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area().height)
+            .map(|y| {
+                (0..buffer.area().width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn type_text(app: &mut App, text: &str) {
+        for c in text.chars() {
+            app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+    }
+
+    #[test]
+    fn the_footer_promises_the_keys_it_keeps() {
+        let screen = screen_of(&app());
+        for promise in [
+            "ctrl+d dry run",
+            // The one-letter keys live inside their words: the k of
+            // "keep awake" and the q of "quit" are the underlined
+            // letters, not separate columns.
+            "keep awake",
+            "enter arm",
+            "space pause",
+            "esc abort",
+            "quit",
+        ] {
+            assert!(screen.contains(promise), "{promise} missing:\n{screen}");
+        }
+        // The badges are earned, not assumed.
+        assert!(!screen.contains("DRY RUN"));
+        assert!(!screen.contains("keeping the screen awake"));
+    }
+
+    #[test]
+    fn the_badges_appear_with_the_choices() {
+        let mut app = app();
+        app.controller.apply(Command::ToggleDryRun);
+        app.controller.apply(Command::ToggleKeepAwake);
+        let screen = screen_of(&app);
+        assert!(
+            screen.contains("DRY RUN: the machine stays awake"),
+            "{screen}"
+        );
+        assert!(screen.contains("keeping the screen awake"), "{screen}");
+    }
+
+    #[test]
+    fn the_field_echoes_both_grammars() {
+        let mut app = app();
+        app.controller.input.clear();
+        type_text(&mut app, "30 min");
+        let screen = screen_of(&app);
+        assert!(screen.contains("-> in "), "duration echo:\n{screen}");
+        app.controller.input.clear();
+        type_text(&mut app, "23:45");
+        let screen = screen_of(&app);
+        assert!(screen.contains("-> at 23:45"), "clock echo:\n{screen}");
+    }
+
+    #[test]
+    fn an_idle_screen_offers_the_arming_and_the_grammar() {
+        let screen = screen_of(&app());
+        assert!(
+            screen.contains("press enter to arm the suspend (to RAM) countdown"),
+            "{screen}"
+        );
+        // The default field says 30 min, and the echo says what it means.
+        assert!(screen.contains("-> in "), "default echo:\n{screen}");
+        // The field's title shows both grammars, clock included.
+        assert!(screen.contains("23:45)"), "field title:\n{screen}");
+    }
+
+    #[test]
+    fn an_armed_countdown_shows_the_clock_its_deadline() {
+        let mut app = app();
+        app.controller.input = "45s".into();
+        assert!(app.controller.arm_selected());
+        let screen = screen_of(&app);
+        // "suspend (to ram) in 45s, at 23:45" - the remaining time and
+        // the wall clock's answer, whatever time of day this test runs.
+        let at = screen
+            .split("suspend (to ram) in 45s, at ")
+            .nth(1)
+            .and_then(|rest| rest.get(..5))
+            .unwrap_or_default();
+        let digits = |text: &str| text.bytes().all(|byte| byte.is_ascii_digit());
+        assert!(
+            at.len() == 5 && digits(&at[..2]) && at.as_bytes()[2] == b':' && digits(&at[3..]),
+            "no clock time after the headline:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn a_paused_countdown_promises_no_deadline() {
+        let mut app = app();
+        app.controller.input = "45s".into();
+        assert!(app.controller.arm_selected());
+        app.controller.apply(Command::PauseResume);
+        let screen = screen_of(&app);
+        assert!(screen.contains("paused, 45s left"), "headline:\n{screen}");
+        // A paused countdown has no deadline: it would drift with the
+        // pause, and the screen must not promise a sliding moment.
+        assert!(!screen.contains(", at "), "paused headline:\n{screen}");
+    }
+}
