@@ -9,10 +9,16 @@
 //! is tied to sleepy's life so a killed sleepy never leaves the screen
 //! pinned: on Linux `cat` exits when our pipe closes, on macOS `caffeinate`
 //! waits on our pid, and on Windows a PowerShell watches it too.
+//!
+//! The browser has no helper process to spawn; there the same promise is
+//! kept with a Wake Lock, held while the countdown runs and re-asked when
+//! the page comes back to the light - see the `web` module.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::{Child, ChildStdin, Command, Stdio};
 
 /// The screen-awake inhibition, held or not.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Default)]
 pub struct KeepAwake {
     child: Option<Child>,
@@ -20,6 +26,7 @@ pub struct KeepAwake {
     pipe: Option<ChildStdin>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl KeepAwake {
     /// An inhibition nobody is holding.
     pub fn new() -> Self {
@@ -61,6 +68,7 @@ impl KeepAwake {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for KeepAwake {
     fn drop(&mut self) {
         self.stop();
@@ -68,6 +76,7 @@ impl Drop for KeepAwake {
 }
 
 /// The helper process that holds the inhibition, if this platform has one.
+#[cfg(not(target_arch = "wasm32"))]
 fn helper() -> Option<Command> {
     if cfg!(target_os = "linux") {
         // logind lifts the idle block when the inhibited command exits;
@@ -109,7 +118,51 @@ fn helper() -> Option<Command> {
     }
 }
 
-#[cfg(test)]
+/// The screen-awake wish, held or not.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Default)]
+pub struct KeepAwake {
+    /// Whether the countdown wants the screen; the Wake Lock itself is
+    /// the browser's to hand out, and `web` keeps it while it is wanted.
+    want: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl KeepAwake {
+    /// An inhibition nobody is holding.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Asks the browser to keep the screen awake, from now until `stop`.
+    /// A browser that will not grant the lock is a shrug, not a veto:
+    /// the countdown goes on and the screen may still blank.
+    pub fn start(&mut self) {
+        self.want = true;
+        crate::web::hold_screen(true);
+    }
+
+    /// Lets go: the Wake Lock is released and the screen may blank again.
+    pub fn stop(&mut self) {
+        self.want = false;
+        crate::web::hold_screen(false);
+    }
+
+    /// Whether the screen is being held awake right now - which on the
+    /// web means "wanted": the browser may still blank a hidden page.
+    pub fn active(&self) -> bool {
+        self.want
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for KeepAwake {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 // A test that cannot get its answer is broken, not a machine that said no.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

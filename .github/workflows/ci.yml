@@ -22,6 +22,16 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  # The web build is the same window on another target, so it is asked
+  # the same questions there: does it compile, and does clippy agree.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo clippy -p sleepy-core -p sleepy-ui --target wasm32-unknown-unknown -- -D warnings
+
   # The MSRV is a promise, so a toolchain holds it to it.
   msrv:
     runs-on: ubuntu-latest

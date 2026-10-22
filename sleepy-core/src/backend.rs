@@ -32,6 +32,11 @@ pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
         // refuse any script at all.
         return Some(script_command());
     }
+    if action == SleepAction::Notify {
+        // A browser has no command to run; the web's answer lives in
+        // `execute`, and no native sleepy offers a notification anyway.
+        return None;
+    }
     if cfg!(target_os = "linux") {
         // systemd takes the action's word as its verb, which is why the
         // `SleepAction` strings are spelled the way they are.
@@ -49,11 +54,12 @@ pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
                 ],
             )),
             // `RunScript` was answered before the platform split; no
-            // platform's sleep verbs run a script.
+            // platform's sleep verbs run a script or send a notification.
             SleepAction::Hibernate
             | SleepAction::HybridSleep
             | SleepAction::SuspendThenHibernate
-            | SleepAction::RunScript => None,
+            | SleepAction::RunScript
+            | SleepAction::Notify => None,
         }
     } else if cfg!(target_os = "windows") {
         // SetSuspendState's first argument picks suspend (0) or hibernate
@@ -75,7 +81,8 @@ pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
             )),
             SleepAction::HybridSleep
             | SleepAction::SuspendThenHibernate
-            | SleepAction::RunScript => None,
+            | SleepAction::RunScript
+            | SleepAction::Notify => None,
         }
     } else {
         None
@@ -107,6 +114,12 @@ fn script_command() -> (String, Vec<String>) {
 /// The command as one line, for showing to the user; `None` if this
 /// platform has no command for the action.
 pub fn describe(action: SleepAction) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    if action == SleepAction::Notify {
+        // There is no command line to show; the web's promise is the
+        // act itself.
+        return Some("send a notification".into());
+    }
     let (program, args) = command_for(action)?;
     Some(
         format!("{program} {}", args.join(" "))
@@ -130,6 +143,10 @@ pub fn describe(action: SleepAction) -> Option<String> {
 /// [`Error::Refused`] when the command ran and said no, and
 /// [`Error::ScriptFailed`] when a script ended with an error.
 pub fn execute(action: SleepAction, backend: Backend) -> Result<(), Error> {
+    #[cfg(target_arch = "wasm32")]
+    if action == SleepAction::Notify {
+        return crate::web::notify(backend);
+    }
     let Some((program, args)) = command_for(action) else {
         return Err(Error::Unsupported(action));
     };
@@ -235,9 +252,11 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_asks_systemctl_with_the_action_as_verb() {
-        // The script is no systemd verb; it was answered before the
-        // platform split.
-        for action in SleepAction::iter().filter(|a| *a != SleepAction::RunScript) {
+        // The script is no systemd verb, and no systemd sends a
+        // notification; both were answered before the platform split.
+        for action in SleepAction::iter()
+            .filter(|a| !matches!(a, SleepAction::RunScript | SleepAction::Notify))
+        {
             let (program, args) = command_for(action).expect("systemd knows all five");
             assert_eq!(program, "systemctl");
             assert_eq!(args, [action.to_string()]);

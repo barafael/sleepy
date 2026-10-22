@@ -4,9 +4,13 @@
 //! shows the countdown and the buttons, and every decision - what this
 //! machine can do, what the typed duration means, when the time has come -
 //! stays sleepy-core's, where it is tested without a display server.
+//!
+//! The same window compiles to wasm and runs on a web page; there the
+//! browser is the machine, and sleepy's one mode is the notification.
 
 mod app;
 mod command;
+#[cfg(not(target_arch = "wasm32"))]
 mod geometry;
 #[cfg(target_os = "linux")]
 mod portal;
@@ -17,8 +21,10 @@ use app::SleepyApp;
 use sleepy_core::Options;
 
 /// The hourglass the window and the taskbar wear, drawn in `assets/`.
+#[cfg(not(target_arch = "wasm32"))]
 const ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     let options = match Options::parse(std::env::args(), HELP, VERSION) {
         Ok(Some(options)) => options,
@@ -58,6 +64,80 @@ fn main() -> eframe::Result {
     )
 }
 
+/// The web's entry: the same window on a canvas, asking the browser's
+/// leave to notify before anything else is drawn.
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    use eframe::wasm_bindgen::JsCast as _;
+    console_error_panic_hook::set_once();
+    // The browser grants notifications once per site and remembers; ask
+    // at the moment the page is freshest, where whoever came to be told
+    // "time" in thirty minutes means to be told. Browsers that wait for
+    // a gesture before they prompt are asked again at the first one.
+    sleepy_core::web::ask_to_notify();
+    wasm_bindgen_futures::spawn_local(async {
+        let document = web_sys::window().and_then(|window| window.document());
+        let canvas = document
+            .as_ref()
+            .and_then(|document| document.get_element_by_id("sleepy"))
+            .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok());
+        let Some(canvas) = canvas else {
+            // No canvas to draw on: the page itself says so below.
+            report(&document, "this page has no canvas to draw sleepy on");
+            return;
+        };
+        let started = eframe::WebRunner::new()
+            .start(
+                canvas,
+                eframe::WebOptions::default(),
+                Box::new(|cc| Ok(Box::new(SleepyApp::new(cc, web_options())))),
+            )
+            .await;
+        match started {
+            Ok(()) => {
+                if let Some(document) = document.as_ref()
+                    && let Some(loading) = document.get_element_by_id("loading")
+                {
+                    loading.remove();
+                }
+            }
+            // A panic on the web has no stderr; the page is where the
+            // news can still reach someone.
+            Err(error) => {
+                let message = error.as_string().unwrap_or_else(|| format!("{error:?}"));
+                report(&document, &message);
+            }
+        }
+    });
+}
+
+/// Says the bad news on the page, where the loading text already is.
+#[cfg(target_arch = "wasm32")]
+fn report(document: &Option<web_sys::Document>, message: &str) {
+    if let Some(loading) = document
+        .as_ref()
+        .and_then(|document| document.get_element_by_id("loading"))
+    {
+        loading.set_text_content(Some(&format!("sleepy could not start: {message}")));
+    }
+}
+
+/// The choices the command line would have made: the browser offers one
+/// mode, nothing is armed until asked, and a fired countdown really
+/// sends the notification - the dry-run checkbox is there to unchoose.
+#[cfg(target_arch = "wasm32")]
+fn web_options() -> Options {
+    Options {
+        backend: sleepy_core::Backend::Real,
+        keep_screen_on: false,
+        when: None,
+        mode: None,
+        modes: sleepy_core::detect(),
+    }
+}
+
+/// The help the command line prints.
+#[cfg(not(target_arch = "wasm32"))]
 const HELP: &str = "\
 sleepy-ui - arm a countdown to sleep, from a window
 
@@ -87,4 +167,5 @@ sleepy still puts the machine to sleep on time.";
 
 /// What `-V` prints: the crate's own name and version, kept true by
 /// the build rather than by memory.
+#[cfg(not(target_arch = "wasm32"))]
 const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"));

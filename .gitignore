@@ -1,1 +1,3 @@
 /target
+# trunk's own marker in the served directory; the build's output stays
+docs/.trunk-lock

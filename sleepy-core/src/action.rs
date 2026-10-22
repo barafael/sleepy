@@ -1,20 +1,23 @@
 //! The ways a machine can stop, and what this one can actually do.
 
 use std::path::{Path, PathBuf};
+// Only the linux probes run a command to ask a question.
+#[cfg(target_os = "linux")]
 use std::process::Command;
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 /// What the countdown does when it ends, listed from quickest to return
-/// from to most final, ending with the one whose business is not the
+/// from to most final, ending with the two whose business is not the
 /// machine's.
 ///
 /// Which of the sleep modes exist is up to the firmware and
 /// the operating system, so [`detect`] asks instead of assuming; the
 /// script exists because the user left one in the working directory.
 ///
-/// The words are systemd's - except `RunScript`, which is sleepy's own -
-/// and they double as sleepy's names for the modes on the command line;
-/// `strum` turns variant names into kebab-case, and `Shutdown` spells
+/// The words are systemd's - except `RunScript` and `Notify`, which
+/// are sleepy's own - and they double as sleepy's names for the modes
+/// on the command line; `strum` turns variant names into kebab-case,
+/// and `Shutdown` spells
 /// itself `poweroff` the way systemd does - while still answering to
 /// `shutdown`, the word a human reaches for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumString, Display, EnumIter)]
@@ -42,6 +45,11 @@ pub enum SleepAction {
     /// is PowerShell's. What the script does is the script's business -
     /// sleepy only promises to run it when the countdown ends.
     RunScript,
+    /// Send a notification instead of sleeping: the browser's one mode,
+    /// where a page cannot stop its machine but can at least clear its
+    /// throat when the time comes. The web build offers only this; no
+    /// native probe ever does.
+    Notify,
 }
 
 impl SleepAction {
@@ -58,6 +66,7 @@ impl SleepAction {
             Self::SuspendThenHibernate => "suspend, then hibernate",
             Self::Shutdown => "shutdown (power off)",
             Self::RunScript => "run-script",
+            Self::Notify => "notify",
         }
     }
 
@@ -70,6 +79,9 @@ impl SleepAction {
     pub fn firing(self) -> String {
         match self {
             Self::RunScript => "run the script".into(),
+            // Not something done to the machine - the machine is exactly
+            // what stays awake to say it.
+            Self::Notify => "send the notification".into(),
             action => format!("{} the machine", action.label().to_lowercase()),
         }
     }
@@ -89,9 +101,9 @@ impl SleepAction {
             Self::HybridSleep => Some("CanHybridSleep"),
             Self::SuspendThenHibernate => Some("CanSuspendThenHibernate"),
             Self::Shutdown => Some("CanPowerOff"),
-            // logind is not asked about the user's script; the file
-            // itself is the whole answer.
-            Self::RunScript => None,
+            // logind is not asked about the user's script, and a browser
+            // has no logind to ask about a notification.
+            Self::RunScript | Self::Notify => None,
         }
     }
 }
@@ -124,21 +136,31 @@ pub fn detect_with(probes: &[&dyn Probe]) -> Vec<SleepAction> {
 
 /// The actions this machine can perform, in display order.
 pub fn detect() -> Vec<SleepAction> {
-    #[cfg(target_os = "linux")]
-    let probes: [&dyn Probe; 3] = [&Logind, &Systemctl, &Fallback];
-    #[cfg(not(target_os = "linux"))]
-    let probes: [&dyn Probe; 1] = [&Fallback];
-    // A machine where nobody can answer (no logind, no systemctl) gets the
-    // assumptions in `Fallback` rather than an empty list.
-    let mut actions = detect_with(&probes);
-    // The script is not a capability of the machine but a promise the
-    // user left in the working directory, so it is not what the probes
-    // are asked about - the file's presence is the whole answer. It
-    // comes last, which is also where `iter` puts it.
-    if script_path().is_some() {
-        actions.push(SleepAction::RunScript);
+    #[cfg(target_arch = "wasm32")]
+    {
+        // A browser tab cannot sleep its machine; the notification is
+        // the web's only mode. It is offered whether or not this browser
+        // will grant it - firing is where a refusal is read.
+        vec![SleepAction::Notify]
     }
-    actions
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        #[cfg(target_os = "linux")]
+        let probes: [&dyn Probe; 3] = [&Logind, &Systemctl, &Fallback];
+        #[cfg(not(target_os = "linux"))]
+        let probes: [&dyn Probe; 1] = [&Fallback];
+        // A machine where nobody can answer (no logind, no systemctl) gets
+        // the assumptions in `Fallback` rather than an empty list.
+        let mut actions = detect_with(&probes);
+        // The script is not a capability of the machine but a promise the
+        // user left in the working directory, so it is not what the probes
+        // are asked about - the file's presence is the whole answer. It
+        // comes last, which is also where `iter` puts it.
+        if script_path().is_some() {
+            actions.push(SleepAction::RunScript);
+        }
+        actions
+    }
 }
 
 /// The script the [`SleepAction::RunScript`] countdown runs, when the
@@ -216,6 +238,8 @@ impl Probe for Systemctl {
 /// The answer inside a reply: the word inside the first pair of quotes
 /// (busctl's `s "yes"`), or the whole reply when nothing is quoted
 /// (systemctl's bare `yes`).
+// Asking is native machinery; a browser has one mode and nothing to probe.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn reply_word(reply: &str) -> &str {
     reply.split('"').nth(1).unwrap_or_else(|| reply.trim())
 }
@@ -227,6 +251,8 @@ fn reply_word(reply: &str) -> &str {
 /// without systemd's help - all three can happen. `no`, `na` (not
 /// applicable), `disabled` and `off` cannot. Anything else is a word we do
 /// not know, which is a shrug, not a veto.
+// Asking is native machinery; a browser has one mode and nothing to probe.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn possible(word: &str) -> Option<bool> {
     match word.to_ascii_lowercase().as_str() {
         "yes" | "challenge" | "platform" => Some(true),
@@ -242,6 +268,8 @@ fn possible(word: &str) -> Option<bool> {
 /// so we offer what we know how to run: suspend and shut down everywhere,
 /// and hibernate on Windows, where it is a setting the user can turn on and
 /// we can ask for.
+// Asking is native machinery; a browser has one mode and nothing to assume.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct Fallback;
 
 impl Probe for Fallback {
@@ -252,10 +280,13 @@ impl Probe for Fallback {
             // Hybrid sleep and suspend-then-hibernate are logind extras
             // the fallback never offers. And the machine can run any
             // script; whether sleepy offers to run *this* one is the
-            // file's business, and `detect` asks the file itself.
+            // file's business, and `detect` asks the file itself. The
+            // notification is the web's mode; a native sleepy has real
+            // sleep to offer instead.
             SleepAction::HybridSleep
             | SleepAction::SuspendThenHibernate
-            | SleepAction::RunScript => false,
+            | SleepAction::RunScript
+            | SleepAction::Notify => false,
         };
         Some(can)
     }
@@ -271,7 +302,7 @@ mod tests {
     fn the_words_are_systemds() {
         // Display is the command-line word, and `poweroff` is the one a
         // case conversion would get wrong, so pin the whole list. The
-        // last word is sleepy's own: no systemd ever had it.
+        // last two words are sleepy's own: no systemd ever had them.
         let words: Vec<String> = SleepAction::iter().map(|a| a.to_string()).collect();
         assert_eq!(
             words,
@@ -281,7 +312,8 @@ mod tests {
                 "hybrid-sleep",
                 "suspend-then-hibernate",
                 "poweroff",
-                "run-script"
+                "run-script",
+                "notify"
             ]
         );
     }
@@ -305,8 +337,9 @@ mod tests {
     fn every_sleep_action_has_a_logind_method() {
         for action in SleepAction::iter() {
             let method = action.method();
-            if action == SleepAction::RunScript {
-                // logind is not asked about the user's script.
+            if matches!(action, SleepAction::RunScript | SleepAction::Notify) {
+                // logind is not asked about the user's script, and a
+                // browser has no logind to ask about a notification.
                 assert_eq!(method, None);
             } else {
                 assert!(
@@ -369,7 +402,7 @@ mod tests {
             [SleepAction::Suspend]
         );
         // And the one that answers first is not overruled by the next.
-        assert_eq!(detect_with(&[&Scripted(Some(true)), &Vec::new()]).len(), 6);
+        assert_eq!(detect_with(&[&Scripted(Some(true)), &Vec::new()]).len(), 7);
     }
 
     #[test]

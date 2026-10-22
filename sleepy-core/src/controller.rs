@@ -13,13 +13,30 @@ use crate::cli::Options;
 use crate::command::Command;
 use crate::input::{ParseError, When, parse_when};
 use crate::timer::{Event as TimerEvent, Status, Timer};
-use std::time::{Instant, SystemTime};
+use std::time::SystemTime;
+use web_time::Instant;
 
 /// The duration offered to a user who types nothing.
 pub const DEFAULT_DURATION: &str = "30 min";
 
 /// What one `+` or `-` is worth, in seconds.
 pub const NUDGE: i64 = 60;
+
+/// The wall clock's now. std's own panics on wasm, where there is no
+/// clock to read; the browser's milliseconds since the epoch are a
+/// `SystemTime` like any other, and arithmetic on one asks nothing of
+/// the platform.
+fn system_now() -> SystemTime {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SystemTime::now()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let millis = js_sys::Date::now();
+        SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(millis.max(0.0) as u64)
+    }
+}
 
 /// The whole application state, apart from how it is drawn.
 #[derive(Debug)]
@@ -109,7 +126,7 @@ impl Controller {
     /// nothing to promise.
     pub fn deadline(&self) -> Option<SystemTime> {
         match self.timer.status() {
-            Status::Armed => Some(SystemTime::now() + self.timer.remaining()),
+            Status::Armed => Some(system_now() + self.timer.remaining()),
             Status::Idle | Status::Paused | Status::Fired => None,
         }
     }
@@ -125,9 +142,7 @@ impl Controller {
                 // A clock time becomes the countdown that reaches it:
                 // the timer itself stays monotonic, knowing only how
                 // long is left.
-                let armed = self
-                    .timer
-                    .arm(action, when.duration_from(SystemTime::now()));
+                let armed = self.timer.arm(action, when.duration_from(system_now()));
                 if armed && self.keep_screen_on {
                     self.awake.start();
                 }

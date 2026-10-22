@@ -15,3 +15,25 @@ humantime = { workspace = true }
 jiff = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }
+web-time = { workspace = true }
+
+# The web build has no machine to sleep and no helper to run: it answers
+# with notifications and a Wake Lock, and reads the browser's own clock.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = [
+  "Document",
+  "Navigator",
+  "Notification",
+  "NotificationOptions",
+  "NotificationPermission",
+  "VisibilityState",
+  "WakeLock",
+  "WakeLockSentinel",
+  "WakeLockType",
+  "Window",
+] }
+# the browser's Intl API is what answers "which zone is this clock in?"
+jiff = { workspace = true, features = ["js"] }

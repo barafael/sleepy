@@ -23,6 +23,15 @@ eframe = { version = "0.37", default-features = false, features = [
 egui = "0.37"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 humantime = "2.4"
+# the browser's clock and console, for the parts of sleepy that run on wasm
+console_error_panic_hook = "0.1"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+# std's Instant and SystemTime panic on wasm; here they are std's own
+# everywhere else, and the browser's clock where std has none
+web-time = "1"
 ratatui = "0.30"
 strum = { version = "0.28", features = ["derive"] }
 thiserror = "2"

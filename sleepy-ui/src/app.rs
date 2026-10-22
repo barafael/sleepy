@@ -9,7 +9,8 @@
 
 use crate::command;
 use sleepy_core::{Command, Controller, Options, Status};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 /// The heartbeat: a countdown that shows whole seconds needs four looks
 /// a second, no more.
@@ -29,7 +30,8 @@ pub struct SleepyApp {
     /// The desktop's light/dark preference.
     #[cfg(target_os = "linux")]
     system_theme: crate::portal::SystemTheme,
-    /// Saves the window's size and position.
+    /// Saves the window's size and position; a browser tab has none.
+    #[cfg(not(target_arch = "wasm32"))]
     window: Option<crate::geometry::Tracker>,
 }
 
@@ -45,11 +47,13 @@ impl SleepyApp {
             ctx: cc.egui_ctx.clone(),
             #[cfg(target_os = "linux")]
             system_theme: crate::portal::SystemTheme::watch(cc.egui_ctx.clone()),
+            #[cfg(not(target_arch = "wasm32"))]
             window: None,
         }
     }
 
     /// Remembers the window's geometry between runs.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_window(mut self, tracker: crate::geometry::Tracker) -> Self {
         self.window = Some(tracker);
         self
@@ -70,6 +74,7 @@ impl eframe::App for SleepyApp {
     /// geometry tracker writes its own file, where the terminal sleepy's
     /// settings already live and where the `XWayland` shift can be undone.
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(window) = &self.window {
             window.save(&self.ctx);
         }
@@ -100,6 +105,7 @@ impl eframe::App for SleepyApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(window) = &mut self.window {
             window.observe(&ctx);
         }
@@ -114,8 +120,13 @@ impl eframe::App for SleepyApp {
             }
         }
         if !self.controller.running() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
+            // A browser tab cannot close itself; the native window
+            // leaves, and the web page simply stays, idle and armable.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
         }
         if let Some(command) = crate::ui::render(self, ui) {
             self.run(command);

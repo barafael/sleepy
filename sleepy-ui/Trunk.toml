@@ -1,0 +1,11 @@
+# sleepy's web build: trunk assembles sleepy-ui for the browser onto
+# index.html and leaves the page in /docs, where GitHub Pages serves it.
+# The names carry no file hash, so what the build leaves is what the
+# commit holds and the page can be read without a diff of names.
+[build]
+target = "index.html"
+dist = "../docs"
+filehash = false
+# GitHub Pages serves a project site under /<repo>/, so the page must
+# reach its files relatively rather than from the domain's root.
+public_url = "./"

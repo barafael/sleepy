@@ -12,12 +12,29 @@ workspace = true
 
 [dependencies]
 sleepy-core = { workspace = true }
-# x11 and wayland are how a window appears on Linux; sleepy is desktop-only
-# by nature - a browser tab cannot put its machine to sleep - so there is no
-# wasm build to gate these behind.
-eframe = { workspace = true, features = ["x11", "wayland"] }
 egui = { workspace = true }
 humantime = { workspace = true }
+web-time = { workspace = true }
+
+# x11 and wayland are how a window appears on Linux; the web build has
+# no window to appear in, so eframe is asked for per platform - its web
+# backend needs no feature, only the wasm target it compiles on.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+eframe = { workspace = true, features = ["x11", "wayland"] }
+
+# The web build is the same window on a canvas: eframe's web backend,
+# the canvas to draw on, and a panic hook that speaks to the console.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+eframe = { workspace = true }
+console_error_panic_hook = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = [
+  "Document",
+  "Element",
+  "HtmlCanvasElement",
+  "Node",
+  "Window",
+] }
 
 # An .exe carries its icon in a resource table; build.rs writes it. The
 # dependency exists only where there is an .exe to write it into.

@@ -1,0 +1,5 @@
+# The browser's Wake Lock is still `web_sys_unstable_apis` territory in
+# web-sys, so the wasm build asks for it by cfg. Native builds never see
+# the flag: it is scoped to the target that needs it.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "web_sys_unstable_apis"]

@@ -7,7 +7,8 @@
 //! and watch it count down, pause and fire without waiting for anything.
 
 use crate::action::SleepAction;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 /// What the timer is doing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

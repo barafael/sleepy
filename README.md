@@ -11,10 +11,11 @@ counts down for real and then only says what it would have run.
 can watch something until the moment comes. Two frontends share one core: a
 terminal app and a window.
 
-And a [web demo](https://barafael.github.io/sleepy/) shares the countdown:
-the same when-grammar and the same keys, which cannot sleep the machine and
-so sends a notification when the time comes - and, in place of the screen
-guard, a Wake Lock that holds the display awake while the page is open.
+And a [web demo](https://barafael.github.io/sleepy/) is the same window
+itself, compiled to wasm: the same egui, the same when-grammar, the same
+keys. A browser tab cannot sleep its machine, so its one mode sends a
+notification when the time comes - and, in place of the screen guard, a
+Wake Lock holds the display awake while the page is open.
 
 ## Crates
 
@@ -115,11 +116,21 @@ blanking back immediately.
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets
+cargo clippy -p sleepy-core -p sleepy-ui --target wasm32-unknown-unknown
 ```
 
 The MSRV is 1.95, which is what eframe asks for; the workspace says so
 (`rust-version`) and the lints there say the house rules: no unsafe, no
 unwraps outside tests.
+
+The web demo is sleepy-ui itself, assembled for the browser by
+[trunk](https://trunkrs.dev). `trunk serve --dist ../target/trunk` in
+`sleepy-ui/` runs it while you work - the separate dist keeps the debug
+build out of `/docs` - and `trunk build --release` leaves the page in
+`/docs`, which GitHub Pages serves: the demo on the web is whatever the
+last commit left there. Where the machine is a browser, the platform's
+answers are swapped behind `cfg`s: sleep gives way to a notification,
+the screen guard to a Wake Lock, and the clock to the browser's own.
 
 The timer is handed its clock (`tick(now)`), so the whole state machine -
 arm, pause, nudge, fire - is tested without waiting for anything. The

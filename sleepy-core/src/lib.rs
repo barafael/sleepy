@@ -7,6 +7,11 @@
 //! - [`backend`]: how do we do it? (and a dry run that only says so)
 //! - [`awake`]: how do we stay visible while we count? (and let go after)
 //!
+//! and, where the machine is a browser, one more:
+//!
+//! - `web`: the browser's own answers (a notification to fire, a
+//!   Wake Lock to hold) for the parts the platform helpers cannot do;
+//!
 //! and three answers the frontends share, so the terminal and the window
 //! cannot drift apart:
 //!
@@ -27,6 +32,8 @@ pub mod command;
 pub mod controller;
 pub mod input;
 pub mod timer;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 
 pub use action::{Probe, SleepAction, detect, detect_with};
 pub use awake::KeepAwake;
