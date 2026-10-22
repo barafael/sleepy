@@ -1,26 +1,24 @@
 //! What the window knows, apart from how it looks.
 //!
 //! The same plain fields the terminal keeps - the modes on offer, the
-//! typed duration, the timer - and egui widgets that edit them directly,
-//! so there is no key handling to write at all. The countdown, however,
-//! still needs a heartbeat: egui only repaints when asked, and a window
-//! nobody is looking at must still fall asleep on time.
+//! typed duration, the timer - plus the commands the keyboard and the
+//! clicked key hints produce. Decisions are delegated to sleepy-core; this
+//! only holds the answers the screen will show and turns commands into
+//! calls. The countdown still needs a heartbeat: egui only repaints when
+//! asked, and a window nobody is looking at must still fall asleep on time.
 
-use humantime::format_duration;
+use crate::command::{self, Command};
 use sleepy_core::{
-    Backend, Error, SleepAction, Status, Timer, TimerEvent, describe, detect, execute,
+    Backend, Error, KeepAwake, SleepAction, Status, Timer, TimerEvent, detect, execute,
     parse_duration,
 };
 use std::time::{Duration, Instant};
-
-/// Storage key of the theme setting.
-const THEME_KEY: &str = "theme";
 
 /// The duration offered to a user who types nothing.
 const DEFAULT: &str = "30 min";
 
 /// What one `-1 min` or `+1 min` is worth, in seconds.
-const NUDGE: i64 = 60;
+pub const NUDGE: i64 = 60;
 
 /// The heartbeat: a countdown that shows whole seconds needs four looks
 /// a second, no more.
@@ -28,6 +26,8 @@ const TICK: Duration = Duration::from_millis(250);
 
 /// The whole application state.
 pub struct SleepyApp {
+    /// Cleared when the user asks to leave.
+    running: bool,
     /// What this machine can do, in display order.
     pub modes: Vec<SleepAction>,
     /// Index into `modes`.
@@ -38,14 +38,22 @@ pub struct SleepyApp {
     pub timer: Timer,
     /// Whether to really sleep or only say so.
     pub backend: Backend,
+    /// Whether to hold the screen awake while the countdown runs.
+    pub keep_screen_on: bool,
+    /// The inhibition itself, held while a countdown runs with
+    /// `keep_screen_on`; closing the window lets it go.
+    awake: KeepAwake,
     /// The action a finished countdown ran, to be shown in the window.
     pub fired: Option<SleepAction>,
     /// Why the machine is still awake after a fired countdown, if it is.
     pub failure: Option<Error>,
+    /// The last command run and when, so its key hint can light up.
+    pub pressed: Option<(Command, f64)>,
+    /// Until the duration field has been focused once: like the terminal,
+    /// where the keystrokes go to the field from the first frame.
+    pub focus_field: bool,
     /// For saving settings, which happens outside a frame.
     ctx: egui::Context,
-    /// Which look the user asked for.
-    theme: egui::ThemePreference,
     /// The desktop's light/dark preference.
     #[cfg(target_os = "linux")]
     system_theme: crate::portal::SystemTheme,
@@ -59,30 +67,30 @@ impl SleepyApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         backend: Backend,
+        keep_screen_on: bool,
         duration: Option<String>,
         mode: Option<SleepAction>,
     ) -> Self {
+        crate::theme::install(&cc.egui_ctx);
         let modes = detect();
         let selected = mode
             .and_then(|want| modes.iter().position(|have| *have == want))
             .unwrap_or(0);
         let arm = duration.is_some();
-        let theme = cc
-            .storage
-            .and_then(|storage| storage.get_string(THEME_KEY))
-            .map(|stored| theme_from_stored(&stored))
-            .unwrap_or_default();
-        cc.egui_ctx.set_theme(theme);
         let mut app = Self {
+            running: true,
             modes,
             selected,
             input: duration.unwrap_or_else(|| DEFAULT.into()),
             timer: Timer::new(),
             backend,
+            keep_screen_on,
+            awake: KeepAwake::new(),
             fired: None,
             failure: None,
+            pressed: None,
+            focus_field: true,
             ctx: cc.egui_ctx.clone(),
-            theme,
             #[cfg(target_os = "linux")]
             system_theme: crate::portal::SystemTheme::watch(cc.egui_ctx.clone()),
             window: None,
@@ -117,9 +125,86 @@ impl SleepyApp {
             (Some(action), Ok(duration)) => {
                 self.fired = None;
                 self.failure = None;
-                self.timer.arm(action, duration)
+                let armed = self.timer.arm(action, duration);
+                if armed && self.keep_screen_on {
+                    self.awake.start();
+                }
+                armed
             }
             _ => false,
+        }
+    }
+
+    /// Switches between really sleeping and only saying so.
+    pub fn toggle_backend(&mut self) {
+        self.backend = match self.backend {
+            Backend::Real => Backend::DryRun,
+            Backend::DryRun => Backend::Real,
+        };
+    }
+
+    /// Switches the screen inhibition, applying the change to a running
+    /// countdown: flipping it on mid-count grabs the inhibition now, and
+    /// flipping it off lets go.
+    pub fn toggle_keep_screen_on(&mut self) {
+        self.keep_screen_on = !self.keep_screen_on;
+        if matches!(self.timer.status(), Status::Armed | Status::Paused) {
+            if self.keep_screen_on {
+                self.awake.start();
+            } else {
+                self.awake.stop();
+            }
+        }
+    }
+
+    /// Moves the highlight, wrapping at both ends.
+    fn move_selection(&mut self, step: isize) {
+        let count = isize::try_from(self.modes.len()).unwrap_or(0);
+        if count == 0 {
+            return;
+        }
+        let next = (isize::try_from(self.selected).unwrap_or(0) + step).rem_euclid(count);
+        self.selected = usize::try_from(next).unwrap_or(0);
+    }
+
+    /// Gives up on the countdown; the machine stays awake.
+    pub fn abort(&mut self) {
+        self.timer.abort();
+        self.awake.stop();
+        self.fired = None;
+        self.failure = None;
+    }
+
+    /// Runs one command, from a key press or a clicked key hint, and notes
+    /// the moment so the hint can light up.
+    fn run(&mut self, command: Command) {
+        self.pressed = Some((command, self.ctx.input(|i| i.time)));
+        let counting = matches!(self.timer.status(), Status::Armed | Status::Paused);
+        match command {
+            Command::PreviousMode => self.move_selection(-1),
+            Command::NextMode => self.move_selection(1),
+            Command::ToggleDryRun => self.toggle_backend(),
+            Command::ToggleKeepAwake => self.toggle_keep_screen_on(),
+            Command::Arm => {
+                self.arm_selected();
+            }
+            Command::PauseResume => match self.timer.status() {
+                Status::Armed => self.timer.pause(),
+                Status::Paused => self.timer.resume(),
+                Status::Idle | Status::Fired => {}
+            },
+            Command::Escape => {
+                // Escape first saves the machine from sleep, and only a
+                // second press closes the window.
+                if counting {
+                    self.abort();
+                } else {
+                    self.running = false;
+                }
+            }
+            Command::Longer => self.timer.adjust(NUDGE),
+            Command::Shorter => self.timer.adjust(-NUDGE),
+            Command::Quit => self.running = false,
         }
     }
 
@@ -127,6 +212,8 @@ impl SleepyApp {
     /// call does not return until the machine wakes; the dry run answers
     /// at once, and the window is there to say so.
     fn perform(&mut self) {
+        // Whatever happens next, the screen is on its own from here.
+        self.awake.stop();
         if let Some(action) = self.fired {
             self.failure = execute(action, self.backend).err();
         }
@@ -134,9 +221,10 @@ impl SleepyApp {
 }
 
 impl eframe::App for SleepyApp {
-    /// Remembers the theme and the window's geometry.
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        storage.set_string(THEME_KEY, theme_to_stored(self.theme));
+    /// Remembers the window's geometry. Not in eframe's storage: the
+    /// geometry tracker writes its own file, where the terminal sleepy's
+    /// settings already live and where the XWayland shift can be undone.
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         if let Some(window) = &self.window {
             window.save(&self.ctx);
         }
@@ -161,203 +249,33 @@ impl eframe::App for SleepyApp {
             self.fired = Some(
                 self.timer
                     .action()
-                    .expect("a fired timer knows what it is doing"),
+                    .expect("a fired countdown knows what it is doing"),
             );
             self.perform();
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         if let Some(window) = &mut self.window {
-            window.observe(ui.ctx());
+            window.observe(&ctx);
         }
-        // The root ui has no margin or background; a panel supplies both.
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("sleepy");
-                if self.backend == Backend::DryRun {
-                    // Say it loudly: this window will talk about sleeping
-                    // and do nothing else.
-                    ui.colored_label(egui::Color32::ORANGE, "dry run");
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    draw_theme(ui, self);
-                });
-            });
-            ui.add_space(8.0);
-            draw_modes(ui, self);
-            ui.add_space(8.0);
-            draw_when(ui, self);
-            ui.add_space(8.0);
-            draw_buttons(ui, self);
-            ui.add_space(12.0);
-            draw_countdown(ui, self);
-        });
-    }
-}
-
-/// The look picker. "system" is what the desktop says, which on Linux is
-/// what the portal watcher hears; egui repaints the moment it changes.
-fn draw_theme(ui: &mut egui::Ui, app: &mut SleepyApp) {
-    let before = app.theme;
-    egui::ComboBox::from_id_salt("theme")
-        .selected_text(theme_to_stored(app.theme))
-        .show_ui(ui, |ui| {
-            for theme in [
-                egui::ThemePreference::System,
-                egui::ThemePreference::Light,
-                egui::ThemePreference::Dark,
-            ] {
-                ui.selectable_value(&mut app.theme, theme, theme_to_stored(theme));
-            }
-        });
-    if app.theme != before {
-        ui.ctx().set_theme(app.theme);
-    }
-}
-
-fn draw_modes(ui: &mut egui::Ui, app: &mut SleepyApp) {
-    if app.modes.is_empty() {
-        ui.colored_label(
-            egui::Color32::DARK_RED,
-            "this machine offers nothing to arm",
-        );
-        return;
-    }
-    ui.horizontal(|ui| {
-        for (index, mode) in app.modes.iter().enumerate() {
-            ui.selectable_value(&mut app.selected, index, mode.label());
-        }
-    });
-}
-
-fn draw_when(ui: &mut egui::Ui, app: &mut SleepyApp) {
-    let field = egui::TextEdit::singleline(&mut app.input)
-        .hint_text("45s, 30 min, 1h30m")
-        .desired_width(f32::INFINITY);
-    let response = ui.add(field);
-    // Enter in the field means the same as the arm button.
-    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-    if response.lost_focus() && enter && app.selected_action().is_some() && app.duration().is_ok() {
-        app.arm_selected();
-    }
-    match app.duration() {
-        Ok(duration) => {
-            ui.colored_label(
-                egui::Color32::DARK_GREEN,
-                format!("-> in {}", format_duration(duration)),
-            );
-        }
-        Err(error) => {
-            ui.colored_label(egui::Color32::DARK_RED, error.hint());
-        }
-    }
-}
-
-fn draw_buttons(ui: &mut egui::Ui, app: &mut SleepyApp) {
-    let armed = app.timer.status() == Status::Armed;
-    let paused = app.timer.status() == Status::Paused;
-    let counting = armed || paused;
-    ui.horizontal(|ui| {
-        let can_arm = app.selected_action().is_some() && app.duration().is_ok();
-        if ui
-            .add_enabled(can_arm, egui::Button::new("arm"))
-            .on_hover_text("start the countdown (or press enter in the field)")
-            .clicked()
-        {
-            app.arm_selected();
-        }
-        if ui.add_enabled(armed, egui::Button::new("pause")).clicked() {
-            app.timer.pause();
-        }
-        if ui
-            .add_enabled(paused, egui::Button::new("resume"))
-            .clicked()
-        {
-            app.timer.resume();
-        }
-        if ui
-            .add_enabled(counting, egui::Button::new("abort"))
-            .on_hover_text("back to idle; the machine stays awake")
-            .clicked()
-        {
-            app.timer.abort();
-            app.fired = None;
-            app.failure = None;
-        }
-    });
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(counting, egui::Button::new("-1 min"))
-            .clicked()
-        {
-            app.timer.adjust(-NUDGE);
-        }
-        if ui
-            .add_enabled(counting, egui::Button::new("+1 min"))
-            .clicked()
-        {
-            app.timer.adjust(NUDGE);
-        }
-    });
-}
-
-fn draw_countdown(ui: &mut egui::Ui, app: &mut SleepyApp) {
-    match app.timer.status() {
-        Status::Idle => {
-            ui.weak(match app.selected_action() {
-                Some(mode) => format!("press arm to start the {} countdown", mode.label()),
-                None => "nothing to arm".to_string(),
-            });
-        }
-        Status::Armed | Status::Paused => {
-            // Whole seconds: a countdown that jitters in microseconds is
-            // noise, not information.
-            let left =
-                format_duration(Duration::from_secs(app.timer.remaining().as_secs())).to_string();
-            ui.label(egui::RichText::new(&left).monospace().size(32.0));
-            ui.add(
-                egui::ProgressBar::new(app.timer.progress())
-                    .text(app.timer.action().map(|m| m.label()).unwrap_or("sleep")),
-            );
-            if app.timer.status() == Status::Paused {
-                ui.weak("paused - the countdown waits for resume");
+        let typing = ctx.memory(|m| m.focused() == Some(crate::ui::field_id()));
+        for command in command::take(&ctx, typing) {
+            if command == Command::Escape && typing {
+                // Escape leaves the field first; the next one does what
+                // the terminal's escape does.
+                ctx.memory_mut(|m| m.surrender_focus(crate::ui::field_id()));
+            } else {
+                self.run(command);
             }
         }
-        Status::Fired => {
-            let action = app
-                .fired
-                .map(|mode| mode.label().to_lowercase())
-                .unwrap_or_else(|| "sleep".to_string());
-            ui.label(egui::RichText::new(format!("time! {action} the machine...")).size(24.0));
-            if app.backend == Backend::DryRun
-                && let Some(command) = app.fired.and_then(describe)
-            {
-                ui.label(format!("would have run: {command}"));
-            }
-            if let Some(error) = &app.failure {
-                ui.colored_label(egui::Color32::DARK_RED, error.to_string());
-            }
+        if !self.running {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
         }
-    }
-}
-
-/// The theme as stored in the settings.
-fn theme_to_stored(theme: egui::ThemePreference) -> String {
-    let name = match theme {
-        egui::ThemePreference::System => "system",
-        egui::ThemePreference::Light => "light",
-        egui::ThemePreference::Dark => "dark",
-    };
-    name.to_owned()
-}
-
-/// The stored theme; anything unrecognised is the default, so a future
-/// name cannot lock the window into a look nobody chose.
-fn theme_from_stored(text: &str) -> egui::ThemePreference {
-    match text {
-        "light" => egui::ThemePreference::Light,
-        "dark" => egui::ThemePreference::Dark,
-        _ => egui::ThemePreference::System,
+        if let Some(command) = crate::ui::render(self, ui) {
+            self.run(command);
+        }
     }
 }
