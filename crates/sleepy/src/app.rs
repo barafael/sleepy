@@ -7,7 +7,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use sleepy_core::{
-    Backend, Error, ParseError, SleepAction, Status, Timer, TimerEvent, detect, execute,
+    Backend, Error, KeepAwake, ParseError, SleepAction, Status, Timer, TimerEvent, detect, execute,
     parse_duration,
 };
 use std::time::{Duration, Instant};
@@ -33,6 +33,11 @@ pub struct App {
     pub timer: Timer,
     /// Whether to really sleep or only say so.
     pub backend: Backend,
+    /// Whether to hold the screen awake while the countdown runs.
+    pub keep_screen_on: bool,
+    /// The inhibition itself, held while a countdown runs with
+    /// `keep_screen_on`; dropping the app lets it go.
+    awake: KeepAwake,
     /// The action a finished countdown ran, for the shell to report.
     pub fired: Option<SleepAction>,
     /// Why the machine is still awake after a fired countdown, if it is.
@@ -44,7 +49,12 @@ impl App {
     /// `duration` fills the field - and, being an explicit request, arms
     /// the countdown at once, so the screen opens as a pause button rather
     /// than an ignition.
-    pub fn new(backend: Backend, duration: Option<String>, mode: Option<SleepAction>) -> Self {
+    pub fn new(
+        backend: Backend,
+        keep_screen_on: bool,
+        duration: Option<String>,
+        mode: Option<SleepAction>,
+    ) -> Self {
         let modes = detect();
         let selected = mode
             .and_then(|want| modes.iter().position(|have| *have == want))
@@ -57,6 +67,8 @@ impl App {
             input: duration.unwrap_or_else(|| DEFAULT.into()),
             timer: Timer::new(),
             backend,
+            keep_screen_on,
+            awake: KeepAwake::new(),
             fired: None,
             failure: None,
         };
@@ -81,8 +93,36 @@ impl App {
     /// lets the screen show why - when either is missing.
     pub fn arm_selected(&mut self) -> bool {
         match (self.selected_action(), parse_duration(&self.input)) {
-            (Some(action), Ok(duration)) => self.timer.arm(action, duration),
+            (Some(action), Ok(duration)) => {
+                let armed = self.timer.arm(action, duration);
+                if armed && self.keep_screen_on {
+                    self.awake.start();
+                }
+                armed
+            }
             _ => false,
+        }
+    }
+
+    /// Switches between really sleeping and only saying so.
+    pub fn toggle_backend(&mut self) {
+        self.backend = match self.backend {
+            Backend::Real => Backend::DryRun,
+            Backend::DryRun => Backend::Real,
+        };
+    }
+
+    /// Switches the screen inhibition, applying the change to a running
+    /// countdown: flipping it on mid-count grabs the inhibition now, and
+    /// flipping it off lets go.
+    pub fn toggle_keep_screen_on(&mut self) {
+        self.keep_screen_on = !self.keep_screen_on;
+        if matches!(self.timer.status(), Status::Armed | Status::Paused) {
+            if self.keep_screen_on {
+                self.awake.start();
+            } else {
+                self.awake.stop();
+            }
         }
     }
 
@@ -103,6 +143,14 @@ impl App {
         match key.code {
             KeyCode::Char('c') if ctrl => self.running = false,
             KeyCode::Char('q') => self.running = false,
+            // `d` is a humantime letter (days) and is sacrificed to the
+            // cause anyway, like `q` before it: the toggle is a safety
+            // valve that must work at any moment - flipping to a dry run
+            // mid-countdown saves the machine without aborting the timer.
+            KeyCode::Char('d') if !ctrl => self.toggle_backend(),
+            // `k` keeps the screen awake; unlike `d` it is no humantime
+            // letter, so typing loses nothing.
+            KeyCode::Char('k') if !ctrl => self.toggle_keep_screen_on(),
             KeyCode::Esc => {
                 // Escape first saves the machine from sleep, and only a
                 // second press returns the shell.
@@ -110,6 +158,7 @@ impl App {
                     self.running = false;
                 } else {
                     self.timer.abort();
+                    self.awake.stop();
                 }
             }
             KeyCode::Up | KeyCode::BackTab => self.move_selection(-1),
@@ -154,8 +203,72 @@ impl App {
     /// the last draw: on a real sleep this call does not return until the
     /// machine wakes, and the dry run answers at once.
     pub fn perform(&mut self) {
+        // Whatever happens next, the screen is on its own from here.
+        self.awake.stop();
         if let Some(action) = self.fired {
             self.failure = execute(action, self.backend).err();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEvent;
+
+    /// An app built by hand, so the tests never ask the machine what it
+    /// can do (`detect` would spawn processes here).
+    fn app() -> App {
+        App {
+            running: true,
+            modes: vec![SleepAction::Suspend],
+            selected: 0,
+            input: DEFAULT.into(),
+            timer: Timer::new(),
+            backend: Backend::Real,
+            keep_screen_on: false,
+            awake: KeepAwake::new(),
+            fired: None,
+            failure: None,
+        }
+    }
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn d_toggles_dry_run_without_typing() {
+        let mut app = app();
+        assert_eq!(app.backend, Backend::Real);
+        app.on_key(press(KeyCode::Char('d')));
+        assert_eq!(app.backend, Backend::DryRun);
+        app.on_key(press(KeyCode::Char('d')));
+        assert_eq!(app.backend, Backend::Real);
+        // The field never saw the key: `d` is a command, not a letter.
+        assert_eq!(app.input, DEFAULT);
+    }
+
+    #[test]
+    fn dry_run_can_be_flipped_while_counting() {
+        // The safety valve: mid-countdown, a flip to dry run saves the
+        // machine without aborting the timer.
+        let mut app = app();
+        assert!(app.arm_selected());
+        app.on_key(press(KeyCode::Char('d')));
+        assert_eq!(app.backend, Backend::DryRun);
+        assert_eq!(app.timer.status(), Status::Armed);
+    }
+
+    #[test]
+    fn k_toggles_keep_awake_without_typing() {
+        let mut app = app();
+        assert!(!app.keep_screen_on);
+        app.on_key(press(KeyCode::Char('k')));
+        assert!(app.keep_screen_on);
+        app.on_key(press(KeyCode::Char('k')));
+        assert!(!app.keep_screen_on);
+        // The field never saw the key either.
+        assert_eq!(app.input, DEFAULT);
     }
 }

@@ -42,6 +42,7 @@ fn main() -> std::process::ExitCode {
 /// What the command line decided before a single key was pressed.
 struct Options {
     backend: Backend,
+    keep_screen_on: bool,
     duration: Option<String>,
     mode: Option<SleepAction>,
 }
@@ -55,13 +56,18 @@ arguments:
   DURATION   when to sleep, in humantime: 45s, 30min, 1h30m
              (default: 30 min; naming it arms the countdown at once)
   MODE       which sleep to use: suspend, hibernate, hybrid-sleep,
-             suspend-then-hibernate (default: the first this machine offers)
+             suspend-then-hibernate, poweroff
+             (default: the first this machine offers)
 
 options:
-      --dry-run   count down for real, but only say what would run
-  -h, --help      print this help
+      --dry-run         count down for real, but only say what would run
+                        (d toggles it while sleepy runs)
+      --keep-screen-on  hold off screen blanking while the countdown runs
+                        (k toggles it)
+  -h, --help            print this help
 
-keys: enter arms, space pauses, esc aborts, +/- a minute, q quits";
+keys: d dry run, k keep awake, enter arms, space pauses, esc aborts,
+      +/- a minute, q quits";
 
 impl Options {
     /// A hand-written parser, because two flags and two positionals do not
@@ -70,6 +76,7 @@ impl Options {
     fn parse(args: impl Iterator<Item = String>) -> Result<Option<Self>, String> {
         let mut options = Self {
             backend: Backend::Real,
+            keep_screen_on: false,
             duration: None,
             mode: None,
         };
@@ -81,6 +88,7 @@ impl Options {
                     return Ok(None);
                 }
                 "--dry-run" => options.backend = Backend::DryRun,
+                "--keep-screen-on" => options.keep_screen_on = true,
                 _ if arg.starts_with('-') => {
                     return Err(format!("unknown option {arg} (try --help)"));
                 }
@@ -90,8 +98,8 @@ impl Options {
                 }
                 _ if positionals == 1 => {
                     options.mode = Some(
-                        SleepAction::from_name(&arg)
-                            .ok_or_else(|| format!("unknown mode {arg} (try --help)"))?,
+                        arg.parse()
+                            .map_err(|_| format!("unknown mode {arg} (try --help)"))?,
                     );
                     positionals += 1;
                 }
@@ -101,16 +109,14 @@ impl Options {
         // Check the answers before the alternate screen, where errors go
         // unread and unheard.
         if let Some(text) = &options.duration {
-            parse_duration(text)
-                .map_err(|error| format!("bad duration {text}: {}", error.hint()))?;
+            parse_duration(text).map_err(|error| format!("bad duration {text}: {error}"))?;
         }
         if let Some(mode) = options.mode {
             let offered = detect();
             if !offered.contains(&mode) {
-                let names: Vec<&str> = offered.iter().map(|action| action.verb()).collect();
+                let names: Vec<String> = offered.iter().map(ToString::to_string).collect();
                 return Err(format!(
-                    "this machine does not offer {} (it offers: {})",
-                    mode.verb(),
+                    "this machine does not offer {mode} (it offers: {})",
                     names.join(", ")
                 ));
             }
@@ -126,7 +132,12 @@ fn run(options: Options) -> Result<()> {
         let mut terminal =
             Terminal::new(CrosstermBackend::new(stdout())).context("cannot start the UI")?;
         let events = event::Events::new(TICK);
-        let mut app = app::App::new(options.backend, options.duration, options.mode);
+        let mut app = app::App::new(
+            options.backend,
+            options.keep_screen_on,
+            options.duration,
+            options.mode,
+        );
         loop {
             terminal
                 .draw(|frame| ui::draw(frame, &app))

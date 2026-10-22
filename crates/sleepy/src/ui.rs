@@ -60,7 +60,7 @@ fn draw_when(frame: &mut Frame, app: &App, area: Rect) {
             Paragraph::new(format!("-> in {}", format_duration(duration)).dark_gray()),
             hint,
         ),
-        Err(error) => frame.render_widget(Paragraph::new(error.hint().red()), hint),
+        Err(error) => frame.render_widget(Paragraph::new(error.to_string().red()), hint),
     }
 }
 
@@ -119,28 +119,40 @@ fn draw_countdown(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let keys = [
         ("up/down", "mode"),
+        ("d", "dry run"),
+        ("k", "keep awake"),
         ("enter", "arm"),
         ("space", "pause"),
         ("esc", "abort"),
         ("+/-", "minute"),
         ("q", "quit"),
     ];
-    let mut spans = keys
-        .into_iter()
-        .flat_map(|(key, what)| {
-            [
-                Span::from(" ").dark_gray(),
-                Span::from(key).bold(),
-                Span::from(format!("{what} ")).dark_gray(),
-            ]
-        })
-        .collect::<Vec<_>>();
+    let mut spans = Vec::new();
+    for (key, what) in keys {
+        spans.push(Span::from(" ").dark_gray());
+        match what.split_once(key) {
+            // A one-letter key that starts its word is shown inside the
+            // word - quit with the q picked out - because "qquit" reads
+            // like a hiccup.
+            Some(("", rest)) => {
+                spans.push(Span::from(key).bold().underlined());
+                spans.push(Span::from(rest).dark_gray());
+            }
+            _ => {
+                spans.push(Span::from(key).bold());
+                spans.push(Span::from(format!(" {what}")).dark_gray());
+            }
+        }
+    }
     if app.backend == sleepy_core::Backend::DryRun {
         spans.push(
             Span::from(" DRY RUN: the machine stays awake ")
                 .yellow()
                 .bold(),
         );
+    }
+    if app.keep_screen_on {
+        spans.push(Span::from(" keeping the screen awake ").green().bold());
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
