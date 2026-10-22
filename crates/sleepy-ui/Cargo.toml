@@ -8,3 +8,9 @@ repository.workspace = true
 
 [dependencies]
 sleepy-core = { workspace = true }
+# x11 and wayland are how a window appears on Linux; sleepy is desktop-only
+# by nature - a browser tab cannot put its machine to sleep - so there is no
+# wasm build to gate these behind.
+eframe = { workspace = true, features = ["x11", "wayland"] }
+egui = { workspace = true }
+humantime = { workspace = true }

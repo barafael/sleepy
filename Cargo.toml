@@ -12,6 +12,12 @@ repository = "https://github.com/barafael/sleepy"
 sleepy-core = { path = "crates/sleepy-core", version = "0.1.0" }
 anyhow = "1"
 crossterm = "0.29"
+eframe = { version = "0.37", default-features = false, features = [
+  "glow",
+  "default_fonts",
+  "persistence",
+] }
+egui = "0.37"
 humantime = "2.4"
 ratatui = "0.30"
 
