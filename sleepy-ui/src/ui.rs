@@ -12,7 +12,7 @@ use crate::command;
 use crate::theme;
 use egui::{Align, Color32, CursorIcon, Label, Layout, Response, RichText, Sense, TextStyle, Ui};
 use humantime::format_duration;
-use sleepy_core::{Backend, Command, Status, When, describe, format_clock};
+use sleepy_core::{Backend, Command, Status, When, describe, format_clock, is_when_prefix};
 use std::time::Duration;
 
 /// Horizontal gap between unrelated items.
@@ -192,12 +192,20 @@ fn draw_modes(app: &mut SleepyApp, ui: &mut Ui) {
 
 fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
     let p = theme::of(ui);
+    // The field holds only what a when could still become: an edit
+    // that completes no when - a stray letter, a bad paste - is
+    // undone before it can mean anything. (`k` never gets this far:
+    // the window takes it as the keep-awake toggle.)
+    let before = app.controller.input.clone();
     let field = egui::TextEdit::singleline(&mut app.controller.input)
         .id(field_id())
         .hint_text("45s, 30 min, 1h30m, 23:45")
         .font(TextStyle::Monospace)
         .desired_width(f32::INFINITY);
     let response = ui.add(field);
+    if !is_when_prefix(&app.controller.input) {
+        app.controller.input = before;
+    }
     // Like the terminal, where the keystrokes go to the field from the
     // first frame; after that the user's focus is their own.
     if app.focus_field {

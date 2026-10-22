@@ -6,7 +6,9 @@
 //! They cannot collide: humantime never reads a colon. The extra rules
 //! are sleepy's own: an empty field is not a when, and zero is not
 //! either - a timer that fires before the user can lift their hands off
-//! the keyboard is a prank, not a feature.
+//! the keyboard is a prank, not a feature - and the field only ever
+//! holds what these grammars could still become, which
+//! [`is_when_prefix`] is what the frontends ask.
 //!
 //! [humantime]: https://docs.rs/humantime
 
@@ -92,6 +94,135 @@ fn parse_clock(text: &str) -> Option<NaiveTime> {
         None => 0,
     };
     NaiveTime::from_hms_opt(hour, minute, second)
+}
+
+/// Whether `typed` could still become a when: a valid when is its own
+/// prefix, and so is anything a few more characters could complete -
+/// `23:`, `30 mi`, `1h3`. The frontends ask before letting a character
+/// into the field, so the field holds nothing no when could wear; the
+/// keys that fall out - `k` among them - are commands at any moment.
+pub fn is_when_prefix(typed: &str) -> bool {
+    if typed.contains(':') {
+        is_clock_prefix(typed)
+    } else {
+        is_duration_prefix(typed)
+    }
+}
+
+/// The clock's shape, unfinished: one or two digits per part, at most
+/// three parts, every finished part inside its range. `23:` may still
+/// become `23:45`; `25:` becomes nothing, and neither does the empty
+/// hour of `:30`.
+fn is_clock_prefix(typed: &str) -> bool {
+    let parts: Vec<&str> = typed.split(':').collect();
+    if parts.len() > 3 {
+        return false;
+    }
+    let fits = |part: &str, limit: u32| {
+        part.len() <= 2
+            && part.bytes().all(|byte| byte.is_ascii_digit())
+            && part.parse::<u32>().is_ok_and(|value| value <= limit)
+    };
+    parts.iter().enumerate().all(|(index, part)| match index {
+        // The hour must be there to begin with, and must already
+        // fit the day: no clock time starts `25`.
+        0 => !part.is_empty() && fits(part, 23),
+        // The minute and second may still be unwritten - a trailing
+        // colon is a part on its way - but only the last part may be
+        // empty, and one digit is as honest as two.
+        _ => (part.is_empty() && index == parts.len() - 1) || fits(part, 59),
+    })
+}
+
+/// humantime's unit words, exactly as humantime matches them - case
+/// included: `M` is months, `m` is minutes, and `H` is nothing at all.
+const UNIT_WORDS: &[&str] = &[
+    "nanos", "nsec", "ns", //
+    "usec", "us", "µs", //
+    "millis", "msec", "ms", //
+    "seconds", "second", "secs", "sec", "s", //
+    "minutes", "minute", "min", "mins", "m", //
+    "hours", "hour", "hr", "hrs", "h", //
+    "days", "day", "d", //
+    "weeks", "week", "wk", "wks", "w", //
+    "months", "month", "M", //
+    "years", "year", "yr", "yrs", "y", //
+];
+
+/// humantime's grammar, unfinished: number-unit pairs, and a tail that
+/// may stop anywhere inside the next pair - mid-number, mid-word, or
+/// after the space that has not reached a unit yet. It mirrors
+/// humantime's own parser, quirks included: whitespace is skipped
+/// inside numbers, so `3 0 m` really is thirty minutes.
+fn is_duration_prefix(typed: &str) -> bool {
+    // Where humantime's parser would be, having read the text so far.
+    enum At {
+        /// Before the first digit; whitespace is free.
+        Start,
+        /// Inside a number, or just past one, waiting for its unit.
+        Number,
+        /// Just past the point, before any fraction digit.
+        Point,
+        /// Inside the fraction's digits.
+        Fraction,
+        /// Inside a unit word, held in `unit`.
+        Unit,
+        /// Past a finished unit and the whitespace after it.
+        Between,
+    }
+    // humantime's own letter class.
+    let letter = |c: char| c.is_ascii_alphabetic() || c == 'µ';
+    // A word no unit starts with completes to nothing.
+    let starts_a_unit = |unit: &str| UNIT_WORDS.iter().any(|word| word.starts_with(unit));
+
+    let mut at = At::Start;
+    let mut unit = String::new();
+    for c in typed.chars() {
+        at = match (at, c) {
+            (At::Start, c) if c.is_whitespace() => At::Start,
+            (At::Start, c) if c.is_ascii_digit() => At::Number,
+            (At::Number, c) if c.is_ascii_digit() || c.is_whitespace() => At::Number,
+            (At::Number, '.') => At::Point,
+            (At::Number | At::Fraction, c) if letter(c) => {
+                unit.clear();
+                unit.push(c);
+                if !starts_a_unit(&unit) {
+                    return false;
+                }
+                At::Unit
+            }
+            (At::Point, c) if c.is_whitespace() => At::Point,
+            (At::Point, c) if c.is_ascii_digit() => At::Fraction,
+            (At::Fraction, c) if c.is_ascii_digit() || c.is_whitespace() => At::Fraction,
+            (At::Unit, c) if letter(c) => {
+                unit.push(c);
+                if !starts_a_unit(&unit) {
+                    return false;
+                }
+                At::Unit
+            }
+            // Whitespace or a digit seals the word: it must be a whole
+            // unit now, as humantime would insist.
+            (At::Unit, c) if c.is_whitespace() || c.is_ascii_digit() => {
+                if !UNIT_WORDS.contains(&unit.as_str()) {
+                    return false;
+                }
+                unit.clear();
+                if c.is_whitespace() {
+                    At::Between
+                } else {
+                    At::Number
+                }
+            }
+            (At::Between, c) if c.is_whitespace() => At::Between,
+            (At::Between, c) if c.is_ascii_digit() => At::Number,
+            _ => return false,
+        };
+    }
+    // Whatever survives to the end can still be completed: a half-typed
+    // word was kept a prefix of a real one, and every other state has a
+    // character waiting that a when could wear.
+    true
 }
 
 /// The next instant strictly after `now` at which the wall clock reads
@@ -197,6 +328,57 @@ mod tests {
         assert_eq!(parse_when("12:60"), Err(ParseError::Clock));
         assert_eq!(parse_when("12:"), Err(ParseError::Clock));
         assert_eq!(parse_when("1:2:3:4"), Err(ParseError::Clock));
+    }
+
+    #[test]
+    fn a_field_holds_what_a_when_could_still_become() {
+        // The clock, half-written.
+        for typed in [
+            "2", "23", "23:", "23:4", "23:45", "23:45:", "23:45:3", "9:05", "0:00:00",
+        ] {
+            assert!(is_when_prefix(typed), "{typed:?}");
+        }
+        // The duration, half-written - humantime's grammar, quirks
+        // included: whitespace inside numbers, a word mid-flight.
+        for typed in [
+            "1", "1h", "1h3", "1h30m", "30 ", "30 m", "30 mi", "1.", "1.5", "1.5h", "2 w", "2 wee",
+            "5µ", "1h 30", "3 0 m",
+            // `0s` parses as zero, but `0s5m` is a real duration.
+            "0s",
+        ] {
+            assert!(is_when_prefix(typed), "{typed:?}");
+        }
+        // Empty is the emptiest prefix of all.
+        assert!(is_when_prefix(""));
+    }
+
+    #[test]
+    fn a_field_refuses_what_no_when_could_wear() {
+        for typed in [
+            "k",
+            "z",
+            "soon",
+            "2x",
+            "25:",
+            "24:00",
+            "12:60",
+            "12:600",
+            ":30",
+            "1::",
+            "1:2:3:4",
+            // The space seals `mi`: no unit word it is.
+            "30 mi ",
+            "1.h",
+            ".5",
+            "1h x",
+            "23:45:30:12",
+        ] {
+            assert!(!is_when_prefix(typed), "{typed:?}");
+        }
+        // `k` is a humantime letter after all - `2 week` is a real
+        // prefix - but the frontends keep the key for the keep-awake
+        // toggle, so it never reaches a field by typing.
+        assert!(is_when_prefix("2 week"));
     }
 
     /// A `now` built by hand: today at `hour:minute`, in whatever zone

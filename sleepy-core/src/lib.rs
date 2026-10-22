@@ -34,5 +34,5 @@ pub use backend::{Backend, Error, describe, execute};
 pub use cli::Options;
 pub use command::Command;
 pub use controller::{Controller, NUDGE};
-pub use input::{ParseError, When, format_clock, parse_when};
+pub use input::{ParseError, When, format_clock, is_when_prefix, parse_when};
 pub use timer::{Event as TimerEvent, Status, Timer};

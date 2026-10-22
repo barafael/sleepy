@@ -6,14 +6,16 @@
 //! editing that goes with it.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use sleepy_core::{Command, Controller, Options, Status};
+use sleepy_core::{Command, Controller, Options, Status, is_when_prefix};
 use std::time::Instant;
 
 /// Which key means which command, in the terminal. What is not here is
 /// the field's own: while it is being edited (idle), the plain
-/// characters - `d`, space, everything humantime reads - type into it.
-/// The window transliterates its own keys to the same commands; what a
-/// command does is core's, shared, so neither frontend can drift.
+/// characters a when could still wear - `d`, space, everything
+/// humantime reads - type into it, and the rest are refused at the
+/// door. The window transliterates its own keys to the same commands;
+/// what a command does is core's, shared, so neither frontend can
+/// drift.
 fn command(key: KeyEvent, idle: bool) -> Option<Command> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -24,8 +26,9 @@ fn command(key: KeyEvent, idle: bool) -> Option<Command> {
         // aborting the timer - so it rides on a chord no text field
         // has a use for, leaving plain `d` to type: `2d` needs it.
         KeyCode::Char('d') if ctrl => Some(Command::ToggleDryRun),
-        // `k` keeps the screen awake; it is no humantime letter, so
-        // typing loses nothing and it is a command at any moment.
+        // `k` keeps the screen awake; it is a command at any moment,
+        // for the field only takes what a when could still become,
+        // and `k` never begins one.
         KeyCode::Char('k') if !ctrl => Some(Command::ToggleKeepAwake),
         KeyCode::Esc if !ctrl => Some(Command::Escape),
         KeyCode::Up | KeyCode::BackTab if !ctrl => Some(Command::PreviousMode),
@@ -76,7 +79,17 @@ impl App {
                     self.controller.input.pop();
                 }
                 KeyCode::Char('u') if ctrl => self.controller.input.clear(),
-                KeyCode::Char(c) if !ctrl => self.controller.input.push(c),
+                // The field holds only what a when could still become:
+                // a character that completes no when is refused at the
+                // door, so the error hint below the field stays a
+                // correction rather than a surprise.
+                KeyCode::Char(c) if !ctrl => {
+                    let mut typed = self.controller.input.clone();
+                    typed.push(c);
+                    if is_when_prefix(&typed) {
+                        self.controller.input.push(c);
+                    }
+                }
                 _ => {}
             },
             None => {}
@@ -185,8 +198,28 @@ mod tests {
         app.controller.input.clear();
         app.on_key(press(KeyCode::Char('k')));
         assert!(app.controller.keep_screen_on);
-        // The field never saw the key: `k` is no humantime letter.
+        // The field never saw the key: `k` is a command at any moment.
         assert_eq!(app.controller.input, "");
+    }
+
+    #[test]
+    fn the_field_refuses_what_no_when_could_wear() {
+        let mut app = app();
+        app.controller.input.clear();
+        type_text(&mut app, "23:4");
+        assert_eq!(app.controller.input, "23:4");
+        // A letter the clock does not wear is refused at the door: no
+        // error to read, just a key that does nothing.
+        type_text(&mut app, "x");
+        assert_eq!(app.controller.input, "23:4");
+        // An hour the day does not have never enters either.
+        app.controller.input.clear();
+        type_text(&mut app, "25:");
+        assert_eq!(app.controller.input, "25");
+        // But a prefix of a real when is never refused.
+        app.controller.input.clear();
+        type_text(&mut app, "1h30m");
+        assert_eq!(app.controller.input, "1h30m");
     }
 
     #[test]

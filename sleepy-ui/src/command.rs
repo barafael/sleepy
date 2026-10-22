@@ -51,11 +51,12 @@ impl Hint {
 
 /// Takes this frame's key presses, as commands.
 ///
-/// While the duration field is being typed into, it keeps the letters:
-/// `d` is one at all times, and the terminal affords the same. What a
-/// text field has no use for - the arrows, enter, escape, Ctrl+D - the
-/// window takes either way, and consumes what it takes so the field
-/// never sees it.
+/// The field keeps only what a when could still wear: the digits, the
+/// unit letters, space - `d` is one at all times, and the terminal
+/// affords the same. What no when wears - `k`, `q`, `+`, `-` - and what
+/// a text field has no use for at all - the arrows, enter, escape,
+/// Ctrl+D - the window takes either way, and consumes what it takes so
+/// the field never sees it.
 pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
     let mut commands = Vec::new();
     ctx.input_mut(|i| {
@@ -73,15 +74,28 @@ pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
         // mid-countdown, and no text field has a use for Ctrl+D, so it
         // is a command while typing too - leaving plain `d` to type.
         press(egui::Modifiers::CTRL, egui::Key::D, Command::ToggleDryRun);
+        // What no when can wear is a command at any moment, here as in
+        // the terminal: `q` quits, `+` and `-` nudge the deadline.
+        press(none, egui::Key::Q, Command::Quit);
+        // The numpad's + and - arrive as Plus and Minus: egui folds
+        // the keypad variants into the same logical keys.
+        press(none, egui::Key::Plus, Command::Longer);
+        press(none, egui::Key::Equals, Command::Longer);
+        press(none, egui::Key::Minus, Command::Shorter);
+        // Space is humantime's separator, so while the field is being
+        // edited it types; once the field is done with it, it pauses.
         if !typing {
-            press(none, egui::Key::K, Command::ToggleKeepAwake);
             press(none, egui::Key::Space, Command::PauseResume);
-            // The numpad's + and - arrive as Plus and Minus: egui folds
-            // the keypad variants into the same logical keys.
-            press(none, egui::Key::Plus, Command::Longer);
-            press(none, egui::Key::Equals, Command::Longer);
-            press(none, egui::Key::Minus, Command::Shorter);
-            press(none, egui::Key::Q, Command::Quit);
+        }
+        // `k` is no when's letter, so it toggles at any moment. And a
+        // focused field reads the text events a press also sends, not
+        // the key itself: consume_key alone would still let it type,
+        // so the text goes with the command.
+        if i.consume_key(none, egui::Key::K) {
+            i.events.retain(
+                |event| !matches!(event, egui::Event::Text(text) if text.contains(['k', 'K'])),
+            );
+            commands.push(Command::ToggleKeepAwake);
         }
     });
     commands
@@ -137,13 +151,23 @@ mod tests {
     }
 
     #[test]
-    fn typing_keeps_its_letters_but_not_its_arrows() {
+    fn typing_keeps_only_what_a_when_can_wear() {
         // The field's characters stay out of the command queue...
-        for key in [egui::Key::D, egui::Key::K, egui::Key::Q, egui::Key::Space] {
+        for key in [egui::Key::D, egui::Key::Space] {
             assert_eq!(take(&pressed(key), true), Vec::new(), "{key:?}");
         }
         // ...and `d` is a letter even when the field is not focused.
         assert_eq!(take(&pressed(egui::Key::D), false), Vec::new());
+        // What no when wears is a command either way: `k` toggles and
+        // `q` quits even while the field has the keyboard.
+        for (key, command) in [
+            (egui::Key::K, Command::ToggleKeepAwake),
+            (egui::Key::Q, Command::Quit),
+            (egui::Key::Minus, Command::Shorter),
+            (egui::Key::Equals, Command::Longer),
+        ] {
+            assert_eq!(take(&pressed(key), true), vec![command], "{key:?}");
+        }
         // ...and what the field cannot use the window still takes.
         for key in [egui::Key::ArrowUp, egui::Key::Enter, egui::Key::Escape] {
             assert_eq!(take(&pressed(key), true).len(), 1, "{key:?}");
@@ -152,6 +176,29 @@ mod tests {
         assert_eq!(
             take(&pressed_with(egui::Key::D, Modifiers::CTRL), true),
             vec![Command::ToggleDryRun]
+        );
+    }
+
+    #[test]
+    fn the_toggle_leaves_no_letter_behind() {
+        // A press sends a focused field a key event *and* a text
+        // event; taking `k` as a command must take both, or the field
+        // types what the window just toggled.
+        let ctx = egui::Context::default();
+        ctx.input_mut(|i| {
+            i.events.push(Event::Key {
+                key: egui::Key::K,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            });
+            i.events.push(Event::Text("k".into()));
+        });
+        assert_eq!(take(&ctx, true), vec![Command::ToggleKeepAwake]);
+        assert!(
+            ctx.input(|i| i.events.iter().all(|e| !matches!(e, Event::Text(_)))),
+            "the field must not type what the window toggled"
         );
     }
 

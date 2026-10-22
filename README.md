@@ -69,18 +69,20 @@ script's own failure, not the machine's.
 The dry-run toggle can be flipped at any moment: switching to a dry run
 mid-countdown saves the machine without aborting the timer. `Space` is
 humantime's separator too, so it types while the field is being edited (idle)
-and pauses once a countdown runs. `k` is no humantime letter, so it is a
-command either way.
+and pauses once a countdown runs. The field takes only what a when could still
+become - `23:`, `30 mi`, `1h3` - and refuses the rest; `k` is a command either
+way, and the field never sees it.
 
 ## Keys (window)
 
 The window answers to the same keys, and `Ctrl+D` toggles the dry run even
 while the field has the keyboard, because a text field has no use for the
-chord. While the field is focused it keeps its other letters - space types a
-space - and only the keys a text field has no use for (`Up` `Down` `Enter`
-`Esc` `Ctrl+D`) are commands either way; the terminal affords the same while
-its timer is idle. `Esc` leaves the field first, then aborts a countdown,
-then quits, one press at a time.
+chord. While the field is focused it keeps only what a when can wear - space
+types a space, `d` types a `d` - and what no when wears is a command either
+way, as in the terminal: `k` toggles keep-awake, `q` quits, `+` `-` nudge the
+deadline, and characters that complete no when the field simply refuses. `Esc`
+leaves the field first, then aborts a countdown, then quits, one press at a
+time.
 Arming - `Enter`, the button, the hint - waits for an idle countdown: a
 running one is never silently replaced. The status bar shows the keys as the
 terminal's footer does, and each hint that stands for a single command can
