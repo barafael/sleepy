@@ -16,6 +16,6 @@ pub mod input;
 pub mod timer;
 
 pub use action::{Probe, SleepAction, detect, detect_with};
-pub use backend::{Backend, describe, execute};
+pub use backend::{Backend, Error, describe, execute};
 pub use input::{ParseError, parse_duration};
 pub use timer::{Event as TimerEvent, Status, Timer};

@@ -14,6 +14,7 @@ use ratatui::{
     widgets::{Block, Gauge, List, ListItem, ListState, Paragraph},
 };
 use sleepy_core::{SleepAction, Status};
+use std::time::Duration;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let [modes, when, countdown, footer] = Layout::vertical([
@@ -78,7 +79,10 @@ fn draw_countdown(frame: &mut Frame, app: &App, area: Rect) {
             frame.render_widget(Paragraph::new(text.dark_gray()), headline);
         }
         Status::Armed | Status::Paused => {
-            let left = format_duration(app.timer.remaining()).to_string();
+            // Whole seconds: a countdown that jitters in microseconds is
+            // noise, not information.
+            let left =
+                format_duration(Duration::from_secs(app.timer.remaining().as_secs())).to_string();
             let action = app
                 .timer
                 .action()
