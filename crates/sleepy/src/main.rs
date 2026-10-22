@@ -8,7 +8,9 @@ use anyhow::{Context, Result};
 use crossterm::{
     event::KeyEventKind,
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
+    },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::{io::stdout, time::Duration};
@@ -30,7 +32,8 @@ fn run() -> Result<()> {
     let mut terminal =
         Terminal::new(CrosstermBackend::new(stdout())).context("cannot start the UI")?;
     let events = event::Events::new(TICK);
-    let mut app = app::App::new();
+    // The next commit replaces this with the command line's choice.
+    let mut app = app::App::new(sleepy_core::Backend::Real);
     loop {
         terminal
             .draw(|frame| ui::draw(frame, &app))
@@ -61,7 +64,7 @@ struct Guard;
 impl Guard {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen)?;
+        execute!(stdout(), EnterAlternateScreen, SetTitle("sleepy"))?;
         let previous_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             // Restore first: the panic message should be readable, and the
@@ -74,7 +77,9 @@ impl Guard {
 
     fn leave() -> Result<()> {
         disable_raw_mode()?;
-        execute!(stdout(), LeaveAlternateScreen)?;
+        // The empty title is the terminal's own reset: sleepy's name goes
+        // away with sleepy, whatever the shell puts back is its business.
+        execute!(stdout(), LeaveAlternateScreen, SetTitle(""))?;
         Ok(())
     }
 }

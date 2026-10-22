@@ -10,4 +10,5 @@ repository.workspace = true
 sleepy-core = { workspace = true }
 anyhow = { workspace = true }
 crossterm = { workspace = true }
+humantime = { workspace = true }
 ratatui = { workspace = true }
