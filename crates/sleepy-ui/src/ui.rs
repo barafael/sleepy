@@ -93,8 +93,8 @@ fn render_header(app: &SleepyApp, ui: &mut Ui) {
                         .color(p.weak),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let (word, color) = match app.timer.status() {
-                        Status::Idle if app.modes.is_empty() => ("stuck", p.red),
+                    let (word, color) = match app.controller.timer.status() {
+                        Status::Idle if app.controller.modes.is_empty() => ("stuck", p.red),
                         Status::Idle => ("idle", p.weak),
                         Status::Armed => ("counting", p.green),
                         Status::Paused => ("paused", p.yellow),
@@ -133,7 +133,10 @@ fn render_body(app: &mut SleepyApp, ui: &mut Ui, typing: bool) {
                 });
             });
             ui.add_space(4.0);
-            let counting = matches!(app.timer.status(), Status::Armed | Status::Paused);
+            let counting = matches!(
+                app.controller.timer.status(),
+                Status::Armed | Status::Paused
+            );
             section_bar(ui, "countdown", "", counting);
             draw_countdown(app, ui);
         });
@@ -141,7 +144,7 @@ fn render_body(app: &mut SleepyApp, ui: &mut Ui, typing: bool) {
 
 fn draw_modes(app: &mut SleepyApp, ui: &mut Ui) {
     let p = theme::of(ui);
-    if app.modes.is_empty() {
+    if app.controller.modes.is_empty() {
         ui.label(
             RichText::new("this machine offers nothing to arm")
                 .color(p.red)
@@ -151,8 +154,8 @@ fn draw_modes(app: &mut SleepyApp, ui: &mut Ui) {
     }
     // A list, not a row of chips: the terminal highlights one line at a
     // time, and up and down move that highlight.
-    for (index, action) in app.modes.iter().enumerate() {
-        let selected = index == app.selected;
+    for (index, action) in app.controller.modes.iter().enumerate() {
+        let selected = index == app.controller.selected;
         let fill = if selected {
             p.accent
         } else if index % 2 == 1 {
@@ -182,14 +185,14 @@ fn draw_modes(app: &mut SleepyApp, ui: &mut Ui) {
             );
         }
         if row.clicked() {
-            app.selected = index;
+            app.controller.selected = index;
         }
     }
 }
 
 fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
     let p = theme::of(ui);
-    let field = egui::TextEdit::singleline(&mut app.input)
+    let field = egui::TextEdit::singleline(&mut app.controller.input)
         .id(field_id())
         .hint_text("45s, 30 min, 1h30m")
         .font(TextStyle::Monospace)
@@ -201,7 +204,7 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
         response.request_focus();
         app.focus_field = false;
     }
-    match app.duration() {
+    match app.controller.duration() {
         Ok(duration) => {
             ui.label(RichText::new(format!("-> in {}", format_duration(duration))).color(p.weak));
         }
@@ -232,7 +235,7 @@ fn toggle(ui: &mut Ui, name: &str, on: bool, tip: &str) -> Response {
 
 fn draw_toggles(app: &mut SleepyApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        let dry = app.backend == Backend::DryRun;
+        let dry = app.controller.backend == Backend::DryRun;
         if toggle(
             ui,
             "dry run",
@@ -241,49 +244,53 @@ fn draw_toggles(app: &mut SleepyApp, ui: &mut Ui) {
         )
         .clicked()
         {
-            app.toggle_backend();
+            app.controller.toggle_backend();
         }
         if toggle(
             ui,
             "keep screen on",
-            app.keep_screen_on,
+            app.controller.keep_screen_on,
             "hold off screen blanking while the countdown runs",
         )
         .clicked()
         {
-            app.toggle_keep_screen_on();
+            app.controller.toggle_keep_screen_on();
         }
     });
 }
 
 fn draw_buttons(app: &mut SleepyApp, ui: &mut Ui) {
-    let armed = app.timer.status() == Status::Armed;
-    let paused = app.timer.status() == Status::Paused;
+    let armed = app.controller.timer.status() == Status::Armed;
+    let paused = app.controller.timer.status() == Status::Paused;
     let counting = armed || paused;
     ui.horizontal(|ui| {
-        let can_arm = app.selected_action().is_some() && app.duration().is_ok();
+        // Arming waits for an idle (or finished) countdown: a running
+        // one is never silently replaced.
+        let can_arm = !counting
+            && app.controller.selected_action().is_some()
+            && app.controller.duration().is_ok();
         if ui
             .add_enabled(can_arm, egui::Button::new("arm"))
             .on_hover_text("start the countdown (or press enter)")
             .clicked()
         {
-            app.arm_selected();
+            app.controller.arm_selected();
         }
         if ui.add_enabled(armed, egui::Button::new("pause")).clicked() {
-            app.timer.pause();
+            app.controller.timer.pause();
         }
         if ui
             .add_enabled(paused, egui::Button::new("resume"))
             .clicked()
         {
-            app.timer.resume();
+            app.controller.timer.resume();
         }
         if ui
             .add_enabled(counting, egui::Button::new("abort"))
             .on_hover_text("back to idle; the machine stays awake")
             .clicked()
         {
-            app.abort();
+            app.controller.abort();
         }
     });
     ui.horizontal(|ui| {
@@ -291,22 +298,22 @@ fn draw_buttons(app: &mut SleepyApp, ui: &mut Ui) {
             .add_enabled(counting, egui::Button::new("-1 min"))
             .clicked()
         {
-            app.timer.adjust(-crate::app::NUDGE);
+            app.controller.timer.adjust(-sleepy_core::NUDGE);
         }
         if ui
             .add_enabled(counting, egui::Button::new("+1 min"))
             .clicked()
         {
-            app.timer.adjust(crate::app::NUDGE);
+            app.controller.timer.adjust(sleepy_core::NUDGE);
         }
     });
 }
 
 fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
     let p = theme::of(ui);
-    match app.timer.status() {
+    match app.controller.timer.status() {
         Status::Idle => {
-            ui.weak(match app.selected_action() {
+            ui.weak(match app.controller.selected_action() {
                 Some(mode) => format!("press enter to arm the {} countdown", mode.label()),
                 None => "nothing to arm".to_string(),
             });
@@ -314,27 +321,31 @@ fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
         Status::Armed | Status::Paused => {
             // Whole seconds: a countdown that jitters in microseconds is
             // noise, not information.
-            let left =
-                format_duration(Duration::from_secs(app.timer.remaining().as_secs())).to_string();
+            let left = format_duration(Duration::from_secs(
+                app.controller.timer.remaining().as_secs(),
+            ))
+            .to_string();
             let action = app
+                .controller
                 .timer
                 .action()
                 .map_or(String::from("sleep"), |mode| mode.label().to_lowercase());
-            let headline = if app.timer.status() == Status::Paused {
+            let headline = if app.controller.timer.status() == Status::Paused {
                 format!("paused, {left} left - press space to resume")
             } else {
                 format!("{action} in {left}")
             };
             ui.label(RichText::new(headline).strong().color(p.strong));
-            ui.add(egui::ProgressBar::new(app.timer.progress()).text(&left));
+            ui.add(egui::ProgressBar::new(app.controller.timer.progress()).text(&left));
         }
         Status::Fired => {
             let action = app
+                .controller
                 .fired
                 .map_or(String::from("sleep"), |mode| mode.label().to_lowercase());
             ui.label(RichText::new(format!("time! {action} the machine...")).size(24.0));
-            if app.backend == Backend::DryRun
-                && let Some(command) = app.fired.and_then(describe)
+            if app.controller.backend == Backend::DryRun
+                && let Some(command) = app.controller.fired.and_then(describe)
             {
                 ui.label(RichText::new(format!("would have run: {command}")).color(p.weak));
             }
@@ -348,35 +359,39 @@ fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
 fn render_status(app: &SleepyApp, ui: &mut Ui, typing: bool) -> Option<Command> {
     let p = theme::of(ui);
     let now = ui.input(|i| i.time);
-    let counting = matches!(app.timer.status(), Status::Armed | Status::Paused);
+    let counting = matches!(
+        app.controller.timer.status(),
+        Status::Armed | Status::Paused
+    );
     let mut clicked = None;
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(GAP as i8, 4))
         .show(ui, |ui| {
-            if let Some(error) = &app.failure {
+            if let Some(error) = &app.controller.failure {
                 ui.label(RichText::new(error.to_string()).color(p.red).strong());
             }
             ui.horizontal_wrapped(|ui| {
                 // The field, echoed while it has the keyboard, so the
-                // window says out loud why `d` is typing instead of doing.
+                // window shows what is being typed rather than left to
+                // the imagination.
                 if typing {
                     ui.label(RichText::new("typing:").color(p.label));
                     ui.label(
-                        RichText::new(format!(" {}▏ ", app.input))
+                        RichText::new(format!(" {}▏ ", app.controller.input))
                             .monospace()
                             .color(p.on_accent)
                             .background_color(p.accent),
                     );
                     ui.add_space(GAP * 2.0);
                 }
-                if app.backend == Backend::DryRun {
+                if app.controller.backend == Backend::DryRun {
                     ui.label(
                         RichText::new(" DRY RUN: the machine stays awake ")
                             .strong()
                             .color(p.yellow),
                     );
                 }
-                if app.keep_screen_on {
+                if app.controller.keep_screen_on {
                     ui.label(
                         RichText::new(" keeping the screen awake ")
                             .strong()

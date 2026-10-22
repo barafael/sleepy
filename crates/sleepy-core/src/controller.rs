@@ -1,0 +1,286 @@
+//! What both frontends know and do, apart from how they look.
+//!
+//! The terminal and the window keep the same state and answer the same
+//! commands - arm, pause, abort, toggle, nudge - so the answers live here
+//! once, where they can be tested without a terminal or a window. Each
+//! frontend wraps a `Controller`, adds its own presentation state, and
+//! turns its own keys into calls here.
+
+use crate::action::SleepAction;
+use crate::awake::KeepAwake;
+use crate::backend::{Backend, Error, execute};
+use crate::cli::Options;
+use crate::input::{ParseError, parse_duration};
+use crate::timer::{Event as TimerEvent, Status, Timer};
+use std::time::{Duration, Instant};
+
+/// The duration offered to a user who types nothing.
+pub const DEFAULT_DURATION: &str = "30 min";
+
+/// What one `+` or `-` is worth, in seconds.
+pub const NUDGE: i64 = 60;
+
+/// The whole application state, apart from how it is drawn.
+#[derive(Debug)]
+pub struct Controller {
+    /// Cleared when the user asks to leave.
+    running: bool,
+    /// What this machine can do, in display order.
+    pub modes: Vec<SleepAction>,
+    /// Index into `modes`.
+    pub selected: usize,
+    /// The duration field.
+    pub input: String,
+    /// The countdown itself.
+    pub timer: Timer,
+    /// Whether to really sleep or only say so.
+    pub backend: Backend,
+    /// Whether to hold the screen awake while the countdown runs.
+    pub keep_screen_on: bool,
+    /// The inhibition itself, held while a countdown runs with
+    /// `keep_screen_on`; dropping the controller lets it go.
+    awake: KeepAwake,
+    /// The action a finished countdown ran, for the frontend to report.
+    pub fired: Option<SleepAction>,
+    /// Why the machine is still awake after a fired countdown, if it is.
+    pub failure: Option<Error>,
+}
+
+impl Controller {
+    /// Starts from the command line's choices: `mode` highlights itself,
+    /// `duration` fills the field - and, being an explicit request, arms
+    /// the countdown at once, so the screen opens as a pause button rather
+    /// than an ignition.
+    pub fn new(options: Options) -> Self {
+        let selected = options
+            .mode
+            .and_then(|want| options.modes.iter().position(|have| *have == want))
+            .unwrap_or(0);
+        let arm = options.duration.is_some();
+        let mut controller = Self {
+            running: true,
+            modes: options.modes,
+            selected,
+            input: options.duration.unwrap_or_else(|| DEFAULT_DURATION.into()),
+            timer: Timer::new(),
+            backend: options.backend,
+            keep_screen_on: options.keep_screen_on,
+            awake: KeepAwake::new(),
+            fired: None,
+            failure: None,
+        };
+        if arm {
+            controller.arm_selected();
+        }
+        controller
+    }
+
+    /// Whether the user has not yet asked to leave.
+    pub fn running(&self) -> bool {
+        self.running
+    }
+
+    /// The user asked to leave; the frontend closes on its way out.
+    pub fn quit(&mut self) {
+        self.running = false;
+    }
+
+    /// The highlighted mode, if the machine offered any.
+    pub fn selected_action(&self) -> Option<SleepAction> {
+        self.modes.get(self.selected).copied()
+    }
+
+    /// What the duration field means right now: a duration, or the reason
+    /// it is not one yet.
+    pub fn duration(&self) -> Result<Duration, ParseError> {
+        parse_duration(&self.input)
+    }
+
+    /// Arms the highlighted mode with the typed duration; refuses - and
+    /// lets the screen show why - when either is missing. A finished
+    /// countdown's report is cleared with the new arming.
+    pub fn arm_selected(&mut self) -> bool {
+        match (self.selected_action(), parse_duration(&self.input)) {
+            (Some(action), Ok(duration)) => {
+                self.fired = None;
+                self.failure = None;
+                let armed = self.timer.arm(action, duration);
+                if armed && self.keep_screen_on {
+                    self.awake.start();
+                }
+                armed
+            }
+            _ => false,
+        }
+    }
+
+    /// Switches between really sleeping and only saying so.
+    pub fn toggle_backend(&mut self) {
+        self.backend = match self.backend {
+            Backend::Real => Backend::DryRun,
+            Backend::DryRun => Backend::Real,
+        };
+    }
+
+    /// Switches the screen inhibition, applying the change to a running
+    /// countdown: flipping it on mid-count grabs the inhibition now, and
+    /// flipping it off lets go.
+    pub fn toggle_keep_screen_on(&mut self) {
+        self.keep_screen_on = !self.keep_screen_on;
+        if matches!(self.timer.status(), Status::Armed | Status::Paused) {
+            if self.keep_screen_on {
+                self.awake.start();
+            } else {
+                self.awake.stop();
+            }
+        }
+    }
+
+    /// Moves the highlight, wrapping at both ends.
+    pub fn move_selection(&mut self, step: isize) {
+        let count = isize::try_from(self.modes.len()).unwrap_or(0);
+        if count == 0 {
+            return;
+        }
+        let next = (isize::try_from(self.selected).unwrap_or(0) + step).rem_euclid(count);
+        self.selected = usize::try_from(next).unwrap_or(0);
+    }
+
+    /// Gives up on the countdown; the machine stays awake and the report
+    /// of a finished one goes with it.
+    pub fn abort(&mut self) {
+        self.timer.abort();
+        self.awake.stop();
+        self.fired = None;
+        self.failure = None;
+    }
+
+    /// Counts the time that passed since the last tick. Returns whether
+    /// the countdown just ended, in which case `fired` now names the
+    /// action and the frontend should [`Self::perform`] it - after one
+    /// last draw saying so, if it can.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        if self.timer.tick(now) == TimerEvent::Fired {
+            self.fired = Some(
+                self.timer
+                    .action()
+                    .expect("a fired countdown knows what it is doing"),
+            );
+            return true;
+        }
+        false
+    }
+
+    /// Does the thing the countdown was armed for. On a real sleep this
+    /// call does not return until the machine wakes; the dry run answers
+    /// at once, and the frontend is there to say so.
+    pub fn perform(&mut self) {
+        // Whatever happens next, the screen is on its own from here.
+        self.awake.stop();
+        if let Some(action) = self.fired {
+            self.failure = execute(action, self.backend).err();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A controller built by hand, so the tests never ask the machine what
+    /// it can do (`detect` would spawn processes here).
+    fn controller() -> Controller {
+        Controller::new(Options {
+            backend: Backend::Real,
+            keep_screen_on: false,
+            duration: None,
+            mode: None,
+            modes: vec![SleepAction::Suspend],
+        })
+    }
+
+    #[test]
+    fn a_named_duration_arms_at_once() {
+        let controller = Controller::new(Options {
+            backend: Backend::Real,
+            keep_screen_on: false,
+            duration: Some("45s".into()),
+            mode: None,
+            modes: vec![SleepAction::Suspend],
+        });
+        assert_eq!(controller.timer.status(), Status::Armed);
+        assert_eq!(controller.timer.remaining(), Duration::from_secs(45));
+    }
+
+    #[test]
+    fn a_named_mode_highlights_itself() {
+        let controller = Controller::new(Options {
+            backend: Backend::Real,
+            keep_screen_on: false,
+            duration: None,
+            mode: Some(SleepAction::Hibernate),
+            modes: vec![SleepAction::Suspend, SleepAction::Hibernate],
+        });
+        assert_eq!(controller.selected_action(), Some(SleepAction::Hibernate));
+    }
+
+    #[test]
+    fn dry_run_can_be_flipped_while_counting() {
+        // The safety valve: mid-countdown, a flip to dry run saves the
+        // machine without aborting the timer.
+        let mut controller = controller();
+        assert!(controller.arm_selected());
+        controller.toggle_backend();
+        assert_eq!(controller.backend, Backend::DryRun);
+        assert_eq!(controller.timer.status(), Status::Armed);
+    }
+
+    #[test]
+    fn keep_awake_toggles_and_applies_to_a_running_countdown() {
+        let mut controller = controller();
+        controller.toggle_keep_screen_on();
+        assert!(controller.keep_screen_on);
+        // Arming with the flag on grabs the inhibition; flipping off
+        // mid-count lets it go. Whether a helper exists is the machine's
+        // business - the contract is that the flag and the holding agree.
+        assert!(controller.arm_selected());
+        controller.toggle_keep_screen_on();
+        assert!(!controller.keep_screen_on);
+    }
+
+    #[test]
+    fn aborting_forgets_the_countdown_and_the_report() {
+        let mut controller = controller();
+        assert!(controller.arm_selected());
+        controller.abort();
+        assert_eq!(controller.timer.status(), Status::Idle);
+        assert!(controller.fired.is_none());
+    }
+
+    #[test]
+    fn selection_wraps_at_both_ends() {
+        let mut controller = Controller::new(Options {
+            backend: Backend::Real,
+            keep_screen_on: false,
+            duration: None,
+            mode: None,
+            modes: vec![SleepAction::Suspend, SleepAction::Hibernate],
+        });
+        controller.move_selection(-1);
+        assert_eq!(controller.selected, 1);
+        controller.move_selection(1);
+        assert_eq!(controller.selected, 0);
+    }
+
+    #[test]
+    fn ticking_reports_the_end_once_and_names_the_action() {
+        let mut controller = controller();
+        assert!(controller.arm_selected());
+        controller.timer.adjust(-86400); // clamped to nothing: "now"
+        controller.tick(Instant::now()); // the first tick only sets the clock
+        assert!(controller.tick(Instant::now()));
+        assert_eq!(controller.fired, Some(SleepAction::Suspend));
+        // Fired is a one-time event; the frontend performs the action once.
+        assert!(!controller.tick(Instant::now() + Duration::from_secs(1)));
+    }
+}

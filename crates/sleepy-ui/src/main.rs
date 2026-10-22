@@ -14,10 +14,10 @@ mod theme;
 mod ui;
 
 use app::SleepyApp;
-use sleepy_core::{Backend, SleepAction, detect, parse_duration};
+use sleepy_core::Options;
 
 fn main() -> eframe::Result {
-    let options = match Options::parse(std::env::args()) {
+    let options = match Options::parse(std::env::args(), HELP) {
         Ok(Some(options)) => options,
         // The help was printed; there is nothing to run.
         Ok(None) => return Ok(()),
@@ -45,27 +45,8 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "sleepy-ui",
         native_options,
-        Box::new(move |cc| {
-            Ok(Box::new(
-                SleepyApp::new(
-                    cc,
-                    options.backend,
-                    options.keep_screen_on,
-                    options.duration,
-                    options.mode,
-                )
-                .with_window(tracker),
-            ))
-        }),
+        Box::new(move |cc| Ok(Box::new(SleepyApp::new(cc, options).with_window(tracker)))),
     )
-}
-
-/// What the command line decided before a single window appeared.
-struct Options {
-    backend: Backend,
-    keep_screen_on: bool,
-    duration: Option<String>,
-    mode: Option<SleepAction>,
 }
 
 const HELP: &str = "\
@@ -89,58 +70,3 @@ options:
 
 the countdown keeps running while the window is hidden; a minimised
 sleepy still puts the machine to sleep on time.";
-
-impl Options {
-    /// The terminal sleepy's parser, with the window's help text: two
-    /// flags and two positionals do not earn a dependency.
-    fn parse(args: impl Iterator<Item = String>) -> Result<Option<Self>, String> {
-        let mut options = Self {
-            backend: Backend::Real,
-            keep_screen_on: false,
-            duration: None,
-            mode: None,
-        };
-        let mut positionals = 0;
-        for arg in args.skip(1) {
-            match arg.as_str() {
-                "-h" | "--help" => {
-                    println!("{HELP}");
-                    return Ok(None);
-                }
-                "--dry-run" => options.backend = Backend::DryRun,
-                "--keep-screen-on" => options.keep_screen_on = true,
-                _ if arg.starts_with('-') => {
-                    return Err(format!("unknown option {arg} (try --help)"));
-                }
-                _ if positionals == 0 => {
-                    options.duration = Some(arg);
-                    positionals += 1;
-                }
-                _ if positionals == 1 => {
-                    options.mode = Some(
-                        arg.parse()
-                            .map_err(|_| format!("unknown mode {arg} (try --help)"))?,
-                    );
-                    positionals += 1;
-                }
-                _ => return Err(format!("unexpected argument {arg} (try --help)")),
-            }
-        }
-        // Check the answers before the window opens, where errors go
-        // unread and unheard.
-        if let Some(text) = &options.duration {
-            parse_duration(text).map_err(|error| format!("bad duration {text}: {error}"))?;
-        }
-        if let Some(mode) = options.mode {
-            let offered = detect();
-            if !offered.contains(&mode) {
-                let names: Vec<String> = offered.iter().map(ToString::to_string).collect();
-                return Err(format!(
-                    "this machine does not offer {mode} (it offers: {})",
-                    names.join(", ")
-                ));
-            }
-        }
-        Ok(Some(options))
-    }
-}

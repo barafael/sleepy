@@ -4,8 +4,10 @@
 //! still react instantly. So two producer threads post into one channel -
 //! one blocks on `event::read`, the other sleeps and wakes as a tick - and
 //! the main thread has a single `recv` to block on. No spinning, no async
-//! runtime. When the receiver goes away the senders fail and the threads
-//! finish by themselves.
+//! runtime. When the receiver goes away the tick thread's send fails and
+//! it finishes on its own; the key thread is parked inside `event::read`
+//! and cannot notice until the next keypress, so it simply goes down with
+//! the process - which exits right after the event loop does.
 
 use crossterm::event::{self, Event as CEvent, KeyEvent};
 use std::{
@@ -26,7 +28,9 @@ pub enum Event {
 /// The app's view of the outside world.
 pub struct Events {
     rx: Receiver<Event>,
-    // The threads stop when `rx` drops; the handles only document that.
+    // The tick thread stops when `rx` drops; the key thread is parked in
+    // `event::read` and goes down with the process. The handles only
+    // document that.
     _producers: (JoinHandle<()>, JoinHandle<()>),
 }
 

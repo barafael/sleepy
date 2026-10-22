@@ -13,7 +13,7 @@ use crossterm::{
     },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use sleepy_core::{Backend, SleepAction, describe, detect, parse_duration};
+use sleepy_core::{Backend, Options, describe};
 use std::{io::stdout, time::Duration};
 
 /// The heartbeat: four redraws a second are plenty for a countdown that
@@ -21,7 +21,7 @@ use std::{io::stdout, time::Duration};
 const TICK: Duration = Duration::from_millis(250);
 
 fn main() -> std::process::ExitCode {
-    let options = match Options::parse(std::env::args()) {
+    let options = match Options::parse(std::env::args(), HELP) {
         Ok(Some(options)) => options,
         // The help was printed; there is nothing to run.
         Ok(None) => return std::process::ExitCode::SUCCESS,
@@ -39,14 +39,6 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-/// What the command line decided before a single key was pressed.
-struct Options {
-    backend: Backend,
-    keep_screen_on: bool,
-    duration: Option<String>,
-    mode: Option<SleepAction>,
-}
-
 const HELP: &str = "\
 sleepy - arm a countdown to sleep
 
@@ -61,69 +53,14 @@ arguments:
 
 options:
       --dry-run         count down for real, but only say what would run
-                        (d toggles it while sleepy runs)
+                        (ctrl+d toggles it while sleepy runs)
       --keep-screen-on  hold off screen blanking while the countdown runs
                         (k toggles it)
   -h, --help            print this help
 
-keys: d dry run, k keep awake, enter arms, space pauses, esc aborts,
-      +/- a minute, q quits";
-
-impl Options {
-    /// A hand-written parser, because two flags and two positionals do not
-    /// earn a dependency, and `--help` should read like sleepy rather than
-    /// like a generator. `Ok(None)` means the help was printed.
-    fn parse(args: impl Iterator<Item = String>) -> Result<Option<Self>, String> {
-        let mut options = Self {
-            backend: Backend::Real,
-            keep_screen_on: false,
-            duration: None,
-            mode: None,
-        };
-        let mut positionals = 0;
-        for arg in args.skip(1) {
-            match arg.as_str() {
-                "-h" | "--help" => {
-                    println!("{HELP}");
-                    return Ok(None);
-                }
-                "--dry-run" => options.backend = Backend::DryRun,
-                "--keep-screen-on" => options.keep_screen_on = true,
-                _ if arg.starts_with('-') => {
-                    return Err(format!("unknown option {arg} (try --help)"));
-                }
-                _ if positionals == 0 => {
-                    options.duration = Some(arg);
-                    positionals += 1;
-                }
-                _ if positionals == 1 => {
-                    options.mode = Some(
-                        arg.parse()
-                            .map_err(|_| format!("unknown mode {arg} (try --help)"))?,
-                    );
-                    positionals += 1;
-                }
-                _ => return Err(format!("unexpected argument {arg} (try --help)")),
-            }
-        }
-        // Check the answers before the alternate screen, where errors go
-        // unread and unheard.
-        if let Some(text) = &options.duration {
-            parse_duration(text).map_err(|error| format!("bad duration {text}: {error}"))?;
-        }
-        if let Some(mode) = options.mode {
-            let offered = detect();
-            if !offered.contains(&mode) {
-                let names: Vec<String> = offered.iter().map(ToString::to_string).collect();
-                return Err(format!(
-                    "this machine does not offer {mode} (it offers: {})",
-                    names.join(", ")
-                ));
-            }
-        }
-        Ok(Some(options))
-    }
-}
+keys: ctrl+d dry run, k keep awake, enter arms, space pauses, esc aborts,
+      +/- a minute, q quits
+      d is always a letter (2d, 30 min); space types while the timer is idle";
 
 fn run(options: Options) -> Result<()> {
     // The guard owns the terminal's mood; dropping it gives the shell back.
@@ -132,12 +69,7 @@ fn run(options: Options) -> Result<()> {
         let mut terminal =
             Terminal::new(CrosstermBackend::new(stdout())).context("cannot start the UI")?;
         let events = event::Events::new(TICK);
-        let mut app = app::App::new(
-            options.backend,
-            options.keep_screen_on,
-            options.duration,
-            options.mode,
-        );
+        let mut app = app::App::new(options);
         loop {
             terminal
                 .draw(|frame| ui::draw(frame, &app))
@@ -159,7 +91,7 @@ fn run(options: Options) -> Result<()> {
                         terminal
                             .draw(|frame| ui::draw(frame, &app))
                             .context("cannot draw")?;
-                        app.perform();
+                        app.controller.perform();
                         break;
                     }
                 }
@@ -169,13 +101,13 @@ fn run(options: Options) -> Result<()> {
     };
     // Only now is it safe to talk: the terminal belongs to the shell again.
     drop(guard);
-    if let Some(action) = app.fired {
-        if app.backend == Backend::DryRun
+    if let Some(action) = app.controller.fired {
+        if app.controller.backend == Backend::DryRun
             && let Some(command) = describe(action)
         {
             println!("would have run: {command}");
         }
-        if let Some(error) = app.failure {
+        if let Some(error) = app.controller.failure {
             return Err(error.into());
         }
     }

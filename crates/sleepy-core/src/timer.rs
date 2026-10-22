@@ -93,16 +93,19 @@ impl Timer {
 
     /// Moves the deadline by `delta` (negative to come closer).
     ///
-    /// The remaining time never leaves `0..=total`... except that a long
-    /// enough `delta` may push it past zero, where the next tick fires:
-    /// shortening the countdown to nothing is a way of saying "now".
-    /// Idle and fired timers have no deadline to move.
+    /// The remaining time never leaves `0..=total`: a long enough `delta`
+    /// clamps at either end. Clamped at zero it fires on the next tick -
+    /// shortening the countdown to nothing is a way of saying "now" - and
+    /// clamped at `total` it keeps a `+` from stretching the countdown
+    /// past the duration it was armed with, which is what keeps the
+    /// progress bar honest. Idle and fired timers have no deadline to move.
     pub fn adjust(&mut self, delta: i64) {
         if !matches!(self.status, Status::Armed | Status::Paused) {
             return;
         }
         let seconds = self.remaining.as_secs_f64() + delta as f64;
-        self.remaining = Duration::from_secs_f64(seconds.max(0.0));
+        let limit = self.total.as_secs_f64();
+        self.remaining = Duration::from_secs_f64(seconds.clamp(0.0, limit));
     }
 
     /// Counts the time that passed since the last tick.
@@ -288,7 +291,8 @@ mod tests {
         timer.tick(clock.at(0.0));
         timer.tick(clock.at(10.0)); // 50 left
         timer.adjust(60);
-        assert_eq!(timer.remaining(), Duration::from_secs(110));
+        // Clamped at the armed duration: the bar cannot run backwards.
+        assert_eq!(timer.remaining(), Duration::from_secs(60));
         timer.adjust(-170);
         assert_eq!(timer.remaining(), Duration::ZERO);
         // A countdown shortened to nothing fires on the next tick.

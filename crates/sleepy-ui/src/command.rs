@@ -54,9 +54,11 @@ impl Hint {
         };
         [
             hint("up/down", "mode", None),
-            hint("d", "dry run", Some(Command::ToggleDryRun)),
+            hint("ctrl+d", "dry run", Some(Command::ToggleDryRun)),
             hint("k", "keep awake", Some(Command::ToggleKeepAwake)),
-            hint("enter", "arm", Some(Command::Arm)),
+            // Arming waits for an idle countdown, so while one runs the
+            // hint stands for nothing a click could do.
+            hint("enter", "arm", (!counting).then_some(Command::Arm)),
             hint("space", "pause", Some(Command::PauseResume)),
             hint(
                 "esc",
@@ -72,32 +74,36 @@ impl Hint {
 /// Takes this frame's key presses, as commands.
 ///
 /// While the duration field is being typed into, it keeps the letters:
-/// `d`, `k` and space are humantime's characters too, and a window can
-/// afford what the terminal had to sacrifice. What a text field has no use
-/// for - the arrows, enter, escape - the window takes either way, and
-/// consumes what it takes so the field never sees it.
+/// `d` is one at all times, and the terminal affords the same. What a
+/// text field has no use for - the arrows, enter, escape, Ctrl+D - the
+/// window takes either way, and consumes what it takes so the field
+/// never sees it.
 pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
     let mut commands = Vec::new();
     ctx.input_mut(|i| {
-        let mut press = |key: egui::Key, command| {
-            if i.consume_key(egui::Modifiers::NONE, key) {
+        let mut press = |modifiers: egui::Modifiers, key: egui::Key, command| {
+            if i.consume_key(modifiers, key) {
                 commands.push(command);
             }
         };
-        press(egui::Key::ArrowUp, Command::PreviousMode);
-        press(egui::Key::ArrowDown, Command::NextMode);
-        press(egui::Key::Enter, Command::Arm);
-        press(egui::Key::Escape, Command::Escape);
+        let none = egui::Modifiers::NONE;
+        press(none, egui::Key::ArrowUp, Command::PreviousMode);
+        press(none, egui::Key::ArrowDown, Command::NextMode);
+        press(none, egui::Key::Enter, Command::Arm);
+        press(none, egui::Key::Escape, Command::Escape);
+        // The dry-run toggle is a safety valve that must work even
+        // mid-countdown, and no text field has a use for Ctrl+D, so it
+        // is a command while typing too - leaving plain `d` to type.
+        press(egui::Modifiers::CTRL, egui::Key::D, Command::ToggleDryRun);
         if !typing {
-            press(egui::Key::D, Command::ToggleDryRun);
-            press(egui::Key::K, Command::ToggleKeepAwake);
-            press(egui::Key::Space, Command::PauseResume);
+            press(none, egui::Key::K, Command::ToggleKeepAwake);
+            press(none, egui::Key::Space, Command::PauseResume);
             // The numpad's + and - arrive as Plus and Minus: egui folds
             // the keypad variants into the same logical keys.
-            press(egui::Key::Plus, Command::Longer);
-            press(egui::Key::Equals, Command::Longer);
-            press(egui::Key::Minus, Command::Shorter);
-            press(egui::Key::Q, Command::Quit);
+            press(none, egui::Key::Plus, Command::Longer);
+            press(none, egui::Key::Equals, Command::Longer);
+            press(none, egui::Key::Minus, Command::Shorter);
+            press(none, egui::Key::Q, Command::Quit);
         }
     });
     commands
@@ -109,7 +115,7 @@ mod tests {
     use egui::{Event, Modifiers};
 
     /// A context with one key press queued up.
-    fn pressed(key: egui::Key) -> egui::Context {
+    fn pressed_with(key: egui::Key, modifiers: Modifiers) -> egui::Context {
         let ctx = egui::Context::default();
         ctx.input_mut(|i| {
             i.events.push(Event::Key {
@@ -117,16 +123,19 @@ mod tests {
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers: Modifiers::NONE,
+                modifiers,
             });
         });
         ctx
     }
 
+    fn pressed(key: egui::Key) -> egui::Context {
+        pressed_with(key, Modifiers::NONE)
+    }
+
     #[test]
     fn keys_become_commands() {
         let cases = [
-            (egui::Key::D, Command::ToggleDryRun),
             (egui::Key::K, Command::ToggleKeepAwake),
             (egui::Key::Q, Command::Quit),
             (egui::Key::Space, Command::PauseResume),
@@ -140,6 +149,11 @@ mod tests {
         for (key, command) in cases {
             assert_eq!(take(&pressed(key), false), vec![command], "{key:?}");
         }
+        // The dry run rides on the chord, not the letter.
+        assert_eq!(
+            take(&pressed_with(egui::Key::D, Modifiers::CTRL), false),
+            vec![Command::ToggleDryRun]
+        );
     }
 
     #[test]
@@ -148,10 +162,17 @@ mod tests {
         for key in [egui::Key::D, egui::Key::K, egui::Key::Q, egui::Key::Space] {
             assert_eq!(take(&pressed(key), true), Vec::new(), "{key:?}");
         }
+        // ...and `d` is a letter even when the field is not focused.
+        assert_eq!(take(&pressed(egui::Key::D), false), Vec::new());
         // ...and what the field cannot use the window still takes.
         for key in [egui::Key::ArrowUp, egui::Key::Enter, egui::Key::Escape] {
             assert_eq!(take(&pressed(key), true).len(), 1, "{key:?}");
         }
+        // Ctrl+D is a safety valve: taken while typing too.
+        assert_eq!(
+            take(&pressed_with(egui::Key::D, Modifiers::CTRL), true),
+            vec![Command::ToggleDryRun]
+        );
     }
 
     #[test]
@@ -160,6 +181,18 @@ mod tests {
         let ctx = pressed(egui::Key::Enter);
         assert_eq!(take(&ctx, true), vec![Command::Arm]);
         assert!(!ctx.input(|i| i.key_pressed(egui::Key::Enter)));
+        let ctx = pressed_with(egui::Key::D, Modifiers::CTRL);
+        assert_eq!(take(&ctx, true), vec![Command::ToggleDryRun]);
+        assert!(
+            ctx.input(|i| i.events.clone()).iter().all(|e| !matches!(
+                e,
+                Event::Key {
+                    key: egui::Key::D,
+                    ..
+                }
+            )),
+            "the field must not see the chord either"
+        );
     }
 
     #[test]
@@ -171,15 +204,15 @@ mod tests {
             let keys: Vec<&str> = hints.iter().map(|h| h.keys).collect();
             assert_eq!(
                 keys,
-                ["up/down", "d", "k", "enter", "space", "esc", "+/-", "q"]
+                [
+                    "up/down", "ctrl+d", "k", "enter", "space", "esc", "+/-", "q"
+                ]
             );
             for hint in hints {
-                assert_eq!(
-                    hint.command.is_some(),
-                    !hint.keys.contains('/'),
-                    "{}",
-                    hint.keys
-                );
+                // Multi-command hints never are; and arm is not while a
+                // countdown runs, because arming waits for an idle one.
+                let clickable = !hint.keys.contains('/') && !(counting && hint.keys == "enter");
+                assert_eq!(hint.command.is_some(), clickable, "{}", hint.keys);
             }
         }
     }

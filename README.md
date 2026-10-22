@@ -4,17 +4,17 @@
 
 sleepy takes a duration a human can read (`45s`, `30 min`, `1h30m`), counts
 down, and puts the machine to sleep when the time comes. Pause, resume or
-abort while it runs; `--dry-run` — or `d` in the terminal, or the checkbox in
-the window — counts down for real and then only says what it would have run.
-`--keep-screen-on` holds off screen blanking while the countdown runs, so
-you can watch something until the moment comes. Two frontends share one
-core: a terminal app and a window.
+abort while it runs; `--dry-run` — or `Ctrl+D` in the terminal, or the
+checkbox in the window — counts down for real and then only says what it
+would have run. `--keep-screen-on` holds off screen blanking while the
+countdown runs, so you can watch something until the moment comes. Two
+frontends share one core: a terminal app and a window.
 
 ## Crates
 
 | Crate | What it is |
 |---|---|
-| `sleepy-core` | The library: sleep actions, capability detection, the timer, the screen guard, humantime parsing. No argv, no terminal, no window - everything here is testable headless. |
+| `sleepy-core` | The library: the command line both frontends share, the controller they drive - arm, pause, toggle, fire - sleep actions, capability detection, the timer, the screen guard, humantime parsing. No terminal, no window - everything here is testable headless. |
 | `sleepy` | The terminal app: ratatui and crossterm, no extra framework. |
 | `sleepy-ui` | The window: eframe and egui, dressed in gruvbox - dark or light, as the desktop prefers. Operable by the terminal's keys or entirely by mouse; remembers its geometry. |
 
@@ -43,7 +43,7 @@ are ever on offer.
 |---|---|
 | typing | edit the duration field |
 | `Up` `Down` `Tab` | pick the mode |
-| `d` | toggle the dry run: talk about sleeping, do nothing |
+| `Ctrl+D` | toggle the dry run: talk about sleeping, do nothing |
 | `k` | toggle keep-awake: the screen stays on while it counts |
 | `Enter` | arm the countdown |
 | `Space` | pause, and pause again to resume |
@@ -52,15 +52,26 @@ are ever on offer.
 | `Esc` | abort a running countdown, quit an idle one |
 | `q` / `Ctrl+C` | quit |
 
+`d` is a letter at all times - `2d` and `30 min` need it - so the dry-run
+toggle rides on `Ctrl+D`, which works at any moment: flipping to a dry run
+mid-countdown saves the machine without aborting the timer. `Space` is
+humantime's separator too, so it types while the field is being edited (idle)
+and pauses once a countdown runs. `k` is no humantime letter, so it is a
+command either way.
+
 ## Keys (window)
 
-The window answers to the same keys, with one difference the terminal could
-not afford: while the duration field is focused it keeps its letters - `d`
-types a day, space types a space - and only the keys a text field has no use
-for (`Up` `Down` `Enter` `Esc`) are commands either way. `Esc` leaves the
-field first, then aborts a countdown, then quits, one press at a time. The
-status bar shows the keys as the terminal's footer does, and each hint that
-stands for a single command can be clicked instead of pressed.
+The window answers to the same keys. `d` is a letter at all times here too,
+and `Ctrl+D` toggles the dry run even while the field has the keyboard,
+because a text field has no use for the chord. While the field is focused it
+keeps its other letters - space types a space - and only the keys a text
+field has no use for (`Up` `Down` `Enter` `Esc` `Ctrl+D`) are commands either
+way; the terminal affords the same while its timer is idle. `Esc` leaves the
+field first, then aborts a countdown, then quits, one press at a time.
+Arming - `Enter`, the button, the hint - waits for an idle countdown: a
+running one is never silently replaced. The status bar shows the keys as the
+terminal's footer does, and each hint that stands for a single command can
+be clicked instead of pressed.
 
 ## How sleepy knows what the machine can do
 
