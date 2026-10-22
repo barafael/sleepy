@@ -289,11 +289,14 @@ fn next_occurrence(target: Time, now: &Zoned) -> Zoned {
 pub fn format_clock(at: SystemTime) -> String {
     // Only a clock outside the years jiff can name falls short here;
     // an instant it cannot place has no wall clock to read.
-    Timestamp::try_from(at).map_or_else(|_| String::new(), |at| {
-        at.to_zoned(TimeZone::system())
-            .strftime("%H:%M")
-            .to_string()
-    })
+    Timestamp::try_from(at).map_or_else(
+        |_| String::new(),
+        |at| {
+            at.to_zoned(TimeZone::system())
+                .strftime("%H:%M")
+                .to_string()
+        },
+    )
 }
 
 /// Why the input is not a when yet.

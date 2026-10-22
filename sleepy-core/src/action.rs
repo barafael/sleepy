@@ -253,9 +253,9 @@ impl Probe for Fallback {
             // the fallback never offers. And the machine can run any
             // script; whether sleepy offers to run *this* one is the
             // file's business, and `detect` asks the file itself.
-            SleepAction::HybridSleep | SleepAction::SuspendThenHibernate | SleepAction::RunScript => {
-                false
-            }
+            SleepAction::HybridSleep
+            | SleepAction::SuspendThenHibernate
+            | SleepAction::RunScript => false,
         };
         Some(can)
     }

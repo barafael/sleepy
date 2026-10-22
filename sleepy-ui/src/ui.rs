@@ -357,10 +357,10 @@ fn draw_countdown(app: &SleepyApp, ui: &mut Ui) {
             ui.add(egui::ProgressBar::new(app.controller.timer.progress()).text(&left));
         }
         Status::Fired => {
-            let action = app
-                .controller
-                .fired
-                .map_or_else(|| String::from("sleep the machine"), sleepy_core::SleepAction::firing);
+            let action = app.controller.fired.map_or_else(
+                || String::from("sleep the machine"),
+                sleepy_core::SleepAction::firing,
+            );
             ui.label(RichText::new(format!("time! {action}...")).size(24.0));
             if app.controller.backend == Backend::DryRun
                 && let Some(command) = app.controller.fired.and_then(describe)
