@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/sleepy", "crates/sleepy-core", "crates/sleepy-ui"]
+members = ["sleepy", "sleepy-core", "sleepy-ui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/barafael/sleepy"
 
 [workspace.dependencies]
-sleepy-core = { path = "crates/sleepy-core", version = "0.1.0" }
+sleepy-core = { path = "sleepy-core", version = "0.1.0" }
 anyhow = "1"
 crossterm = "0.29"
 eframe = { version = "0.37", default-features = false, features = [
