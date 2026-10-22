@@ -4,9 +4,10 @@
 //! always picked dark there. This reads `color-scheme` from the XDG settings
 //! portal and follows its changes on a background thread.
 
+use futures_util::stream::StreamExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant, Variant};
 
 const NAMESPACE: &str = "org.freedesktop.appearance";
 const KEY: &str = "color-scheme";
@@ -38,23 +39,33 @@ impl SystemTheme {
     }
 
     fn follow(&self, ctx: &egui::Context) -> zbus::Result<()> {
-        let connection = zbus::blocking::Connection::session()?;
-        let settings = zbus::blocking::Proxy::new(
+        // zbus 6 has no blocking API: the thread that calls `block_on`
+        // drives the runtime itself, which is exactly what a thread whose
+        // only job is watching one signal can do.
+        zbus::block_on(self.watch_portal(ctx))
+    }
+
+    async fn watch_portal(&self, ctx: &egui::Context) -> zbus::Result<()> {
+        let connection = zbus::Connection::session().await?;
+        let settings = zbus::Proxy::new(
             &connection,
             "org.freedesktop.portal.Desktop",
             "/org/freedesktop/portal/desktop",
             "org.freedesktop.portal.Settings",
-        )?;
+        )
+        .await?;
         // Subscribe before reading, so a change in between is not lost.
-        let changes = settings.receive_signal("SettingChanged")?;
+        let mut changes = settings.receive_signal("SettingChanged").await?;
         // `ReadOne` is the current method; older portals only have `Read`.
-        let value: OwnedValue = settings
-            .call("ReadOne", &(NAMESPACE, KEY))
-            .or_else(|_| settings.call("Read", &(NAMESPACE, KEY)))?;
+        let value: OwnedVariant = match settings.call("ReadOne", &(NAMESPACE, KEY)).await {
+            Ok(value) => value,
+            Err(_) => settings.call("Read", &(NAMESPACE, KEY)).await?,
+        };
         self.set(&value, ctx);
-        for message in changes {
-            if let Ok((namespace, key, value)) =
-                message.body().deserialize::<(String, String, OwnedValue)>()
+        while let Some(message) = changes.next().await {
+            if let Ok((namespace, key, value)) = message
+                .body()
+                .deserialize::<(String, String, OwnedVariant)>()
                 && namespace == NAMESPACE
                 && key == KEY
             {
@@ -64,17 +75,17 @@ impl SystemTheme {
         Ok(())
     }
 
-    fn set(&self, value: &Value<'_>, ctx: &egui::Context) {
+    fn set(&self, value: &Variant<'_>, ctx: &egui::Context) {
         self.0.store(scheme(value), Ordering::Relaxed);
         ctx.request_repaint();
     }
 }
 
 /// The scheme number, unwrapping the extra variant layer `Read` adds.
-fn scheme(value: &Value<'_>) -> u8 {
+fn scheme(value: &Variant<'_>) -> u8 {
     match value {
-        Value::U32(n @ 0..=2) => *n as u8,
-        Value::Value(inner) => scheme(inner),
+        Variant::U32(n @ 0..=2) => *n as u8,
+        Variant::Variant(inner) => scheme(inner),
         _ => 0,
     }
 }
@@ -85,9 +96,9 @@ mod tests {
 
     #[test]
     fn scheme_values() {
-        assert_eq!(scheme(&Value::U32(2)), 2);
-        assert_eq!(scheme(&Value::Value(Box::new(Value::U32(1)))), 1);
-        assert_eq!(scheme(&Value::U32(7)), 0);
-        assert_eq!(scheme(&Value::from("dark")), 0);
+        assert_eq!(scheme(&Variant::U32(2)), 2);
+        assert_eq!(scheme(&Variant::Variant(Box::new(Variant::U32(1)))), 1);
+        assert_eq!(scheme(&Variant::U32(7)), 0);
+        assert_eq!(scheme(&Variant::from("dark")), 0);
     }
 }

@@ -18,11 +18,12 @@ eframe = { version = "0.37", default-features = false, features = [
   "persistence",
 ] }
 egui = "0.37"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 humantime = "2.4"
 ratatui = "0.30"
 strum = { version = "0.28", features = ["derive"] }
 thiserror = "2"
-zbus = "5.19"
+zbus = "6.0"
 
 [profile.release]
 opt-level = 3
