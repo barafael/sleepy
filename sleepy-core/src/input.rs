@@ -12,7 +12,11 @@
 //!
 //! [humantime]: https://docs.rs/humantime
 
-use chrono::{DateTime, Local, MappedLocalTime, NaiveTime, TimeDelta};
+use jiff::{
+    Timestamp, ToSpan, Zoned,
+    civil::{DateTime, Time},
+    tz::{AmbiguousOffset, TimeZone},
+};
 use std::time::{Duration, SystemTime};
 
 /// When the machine should sleep: after a while, or when the clock says so.
@@ -21,7 +25,7 @@ pub enum When {
     /// This much time from now.
     After(Duration),
     /// The next time the wall clock reads this.
-    At(NaiveTime),
+    At(Time),
 }
 
 impl When {
@@ -32,14 +36,21 @@ impl When {
         match self {
             When::After(duration) => *duration,
             When::At(time) => {
-                let now = DateTime::<Local>::from(now);
-                let delta = next_occurrence(*time, now) - now;
+                // Only a clock outside the years jiff can name falls
+                // short here; a machine that cannot read its own clock
+                // has no time left to wait, which is what a deadline
+                // that has gone by answers anyway.
+                let Ok(now) = Timestamp::try_from(now) else {
+                    return Duration::ZERO;
+                };
+                let now = now.to_zoned(TimeZone::system());
+                let delta = now.duration_until(&next_occurrence(*time, &now));
                 // Whole seconds, rounded up: a countdown that sleeps at
                 // 23:44:59.5 has fallen asleep before its time.
-                match delta.num_nanoseconds() {
+                match delta.as_nanos() {
                     // The delta is positive and under two days; only a
                     // broken clock could make it anything else.
-                    Some(ns) if ns > 0 => Duration::from_secs((ns as u64).div_ceil(1_000_000_000)),
+                    ns if ns > 0 => Duration::from_secs((ns as u64).div_ceil(1_000_000_000)),
                     _ => Duration::ZERO,
                 }
             }
@@ -76,12 +87,12 @@ pub fn parse_duration(input: &str) -> Result<Duration, ParseError> {
 /// The clock's own grammar: `HH:MM`, or `HH:MM:SS` - one or two digits
 /// per part, so `9:05` is as honest as `09:05`. Anything outside the
 /// day's range is not a clock time, and `None` says so.
-fn parse_clock(text: &str) -> Option<NaiveTime> {
+fn parse_clock(text: &str) -> Option<Time> {
     let parts: Vec<&str> = text.split(':').collect();
     if parts.len() < 2 || parts.len() > 3 {
         return None;
     }
-    let number = |part: &str| -> Option<u32> {
+    let number = |part: &str| -> Option<i8> {
         if part.is_empty() || part.len() > 2 || !part.bytes().all(|byte| byte.is_ascii_digit()) {
             return None;
         }
@@ -93,7 +104,7 @@ fn parse_clock(text: &str) -> Option<NaiveTime> {
         Some(part) => number(part)?,
         None => 0,
     };
-    NaiveTime::from_hms_opt(hour, minute, second)
+    Time::new(hour, minute, second, 0).ok()
 }
 
 /// Whether `typed` could still become a when: a valid when is its own
@@ -227,34 +238,54 @@ fn is_duration_prefix(typed: &str) -> bool {
 
 /// The next instant strictly after `now` at which the wall clock reads
 /// `target`.
-fn next_occurrence(target: NaiveTime, now: DateTime<Local>) -> DateTime<Local> {
+fn next_occurrence(target: Time, now: &Zoned) -> Zoned {
+    let zone = now.time_zone();
     // Today if it has not gone by, tomorrow if it has; the third day
     // is for the spring-forward night that skips the time itself.
     for offset in 0..=2 {
-        let day = now.date_naive() + TimeDelta::days(offset);
-        let on_the_clock = match day.and_time(target).and_local_timezone(Local) {
-            MappedLocalTime::Single(at) => Some(at),
+        let Ok(day) = now.date().checked_add(offset.days()) else {
+            continue;
+        };
+        let ambiguous = zone.to_ambiguous_zoned(DateTime::from_parts(day, target));
+        let on_the_clock = match ambiguous.offset() {
+            AmbiguousOffset::Unambiguous { .. } => ambiguous.earlier().ok(),
             // Autumn turns one clock time into two: sleep at the first
             // passing, or at the second if the first has gone by.
-            MappedLocalTime::Ambiguous(earliest, latest) => {
-                Some(if earliest > now { earliest } else { latest })
+            AmbiguousOffset::Fold { .. } => {
+                match ambiguous
+                    .clone()
+                    .earlier()
+                    .ok()
+                    .filter(|first| *first > *now)
+                {
+                    Some(first) => Some(first),
+                    None => ambiguous.later().ok(),
+                }
             }
             // Spring takes a clock time off the day entirely.
-            MappedLocalTime::None => None,
+            AmbiguousOffset::Gap { .. } => None,
         };
-        if let Some(at) = on_the_clock.filter(|at| *at > now) {
+        if let Some(at) = on_the_clock.filter(|at| *at > *now) {
             return at;
         }
     }
     // Unreachable: tomorrow always offers the time, and no three days
     // in a row skip it. Should a clock ever disagree, sleep now.
-    now
+    now.clone()
 }
 
 /// The wall clock's own answer for an instant - `23:45` - which is what
 /// the frontends show beside a running countdown.
 pub fn format_clock(at: SystemTime) -> String {
-    DateTime::<Local>::from(at).format("%H:%M").to_string()
+    // Only a clock outside the years jiff can name falls short here;
+    // an instant it cannot place has no wall clock to read.
+    match Timestamp::try_from(at) {
+        Ok(at) => at
+            .to_zoned(TimeZone::system())
+            .strftime("%H:%M")
+            .to_string(),
+        Err(_) => String::new(),
+    }
 }
 
 /// Why the input is not a when yet.
@@ -283,14 +314,14 @@ pub enum ParseError {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use chrono::Timelike;
+    use jiff::civil;
 
     fn secs(input: &str) -> u64 {
         parse_duration(input).unwrap().as_secs()
     }
 
-    fn clock(hour: u32, minute: u32, second: u32) -> When {
-        When::At(NaiveTime::from_hms_opt(hour, minute, second).unwrap())
+    fn clock(hour: i8, minute: i8, second: i8) -> When {
+        When::At(civil::time(hour, minute, second, 0))
     }
 
     #[test]
@@ -384,32 +415,31 @@ mod tests {
     /// A `now` built by hand: today at `hour:minute`, in whatever zone
     /// the machine lives. The answers below hold in every zone on every
     /// day, because no zone skips a midday hour.
-    fn today_at(hour: u32, minute: u32) -> DateTime<Local> {
-        let naive = Local::now()
-            .date_naive()
-            .and_hms_opt(hour, minute, 0)
-            .unwrap();
-        naive.and_local_timezone(Local).earliest().unwrap()
+    fn today_at(hour: i8, minute: i8) -> Zoned {
+        let today = Zoned::now().date();
+        // No zone skips a midday hour, so the instant is unambiguous
+        // and `earlier` is it.
+        TimeZone::system()
+            .to_ambiguous_zoned(today.at(hour, minute, 0, 0))
+            .earlier()
+            .unwrap()
     }
 
     #[test]
     fn a_clock_time_means_the_next_one_to_come() {
         let now = today_at(8, 0);
         // This afternoon has not gone by: today it is.
-        let afternoon = next_occurrence(NaiveTime::from_hms_opt(15, 30, 0).unwrap(), now);
-        assert_eq!(afternoon.date_naive(), now.date_naive());
-        assert_eq!(
-            afternoon.time(),
-            NaiveTime::from_hms_opt(15, 30, 0).unwrap()
-        );
+        let afternoon = next_occurrence(civil::time(15, 30, 0, 0), &now);
+        assert_eq!(afternoon.date(), now.date());
+        assert_eq!(afternoon.time(), civil::time(15, 30, 0, 0));
         // This morning has: tomorrow, whatever the zone did to the day.
-        let morning = next_occurrence(NaiveTime::from_hms_opt(7, 30, 0).unwrap(), now);
-        assert_eq!(morning.date_naive(), now.date_naive() + TimeDelta::days(1));
-        assert_eq!(morning.time(), NaiveTime::from_hms_opt(7, 30, 0).unwrap());
+        let morning = next_occurrence(civil::time(7, 30, 0, 0), &now);
+        assert_eq!(morning.date(), now.date().checked_add(1.days()).unwrap());
+        assert_eq!(morning.time(), civil::time(7, 30, 0, 0));
         // A time exactly now has gone by: the next one is tomorrow.
-        let same = next_occurrence(NaiveTime::from_hms_opt(8, 0, 0).unwrap(), now);
-        assert_eq!(same.date_naive(), now.date_naive() + TimeDelta::days(1));
-        assert_eq!(same.time(), NaiveTime::from_hms_opt(8, 0, 0).unwrap());
+        let same = next_occurrence(civil::time(8, 0, 0, 0), &now);
+        assert_eq!(same.date(), now.date().checked_add(1.days()).unwrap());
+        assert_eq!(same.time(), civil::time(8, 0, 0, 0));
     }
 
     #[test]
@@ -417,18 +447,15 @@ mod tests {
         // Rounded up to the second, so the wall clock really reads the
         // target when the countdown ends - never a second before.
         let now = SystemTime::now();
-        let target = Local::now() + TimeDelta::hours(3);
-        let time = target
-            .time()
-            .with_second(0)
-            .unwrap()
-            .with_nanosecond(0)
-            .unwrap();
+        let target = Zoned::now().checked_add(3.hours()).unwrap();
+        let time = civil::time(target.time().hour(), target.time().minute(), 0, 0);
         let duration = When::At(time).duration_from(now);
-        let at = DateTime::<Local>::from(now + duration);
+        let at = Timestamp::try_from(now + duration)
+            .unwrap()
+            .to_zoned(TimeZone::system());
         assert_eq!(
-            at.time().format("%H:%M").to_string(),
-            time.format("%H:%M").to_string()
+            at.strftime("%H:%M").to_string(),
+            time.strftime("%H:%M").to_string()
         );
     }
 }

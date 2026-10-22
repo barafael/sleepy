@@ -65,7 +65,7 @@ fn draw_when(frame: &mut Frame, app: &App, area: Rect) {
             hint,
         ),
         Ok(When::At(time)) => frame.render_widget(
-            Paragraph::new(format!("-> at {}", time.format("%H:%M")).dark_gray()),
+            Paragraph::new(format!("-> at {}", time.strftime("%H:%M")).dark_gray()),
             hint,
         ),
         Err(error) => frame.render_widget(Paragraph::new(error.to_string().red()), hint),

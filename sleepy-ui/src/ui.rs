@@ -219,7 +219,7 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
             ui.label(RichText::new(format!("-> in {}", format_duration(duration))).color(p.weak));
         }
         Ok(When::At(time)) => {
-            ui.label(RichText::new(format!("-> at {}", time.format("%H:%M"))).color(p.weak));
+            ui.label(RichText::new(format!("-> at {}", time.strftime("%H:%M"))).color(p.weak));
         }
         Err(error) => {
             ui.label(RichText::new(error.to_string()).color(p.red));

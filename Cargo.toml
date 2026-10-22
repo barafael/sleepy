@@ -13,7 +13,7 @@ repository = "https://github.com/barafael/sleepy"
 sleepy-core = { path = "sleepy-core", version = "0.1.0" }
 anyhow = "1"
 # only for the wall clock: what "23:45" means from here, and when it next comes
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+jiff = "0.2"
 crossterm = "0.29"
 eframe = { version = "0.37", default-features = false, features = [
   "glow",
