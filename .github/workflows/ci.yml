@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      # No apt packages, on purpose: sleepy-ui builds against winit and
+      # glow, which load the display server's libraries at runtime rather
+      # than link time, so even a headless runner needs nothing beyond
+      # the toolchain. (Verified: `ldd sleepy-ui` shows only libc.)
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  # The MSRV is a promise, so a toolchain holds it to it.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup toolchain install 1.95 --profile minimal
+      - run: cargo +1.95 check --workspace --all-targets
