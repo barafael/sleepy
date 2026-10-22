@@ -66,8 +66,7 @@ script's own failure, not the machine's.
 | `Esc` | abort a running countdown, quit an idle one |
 | `q` / `Ctrl+C` | quit |
 
-`d` is a letter at all times - `2d` and `30 min` need it - so the dry-run
-toggle rides on `Ctrl+D`, which works at any moment: flipping to a dry run
+The dry-run toggle can be flipped at any moment: switching to a dry run
 mid-countdown saves the machine without aborting the timer. `Space` is
 humantime's separator too, so it types while the field is being edited (idle)
 and pauses once a countdown runs. `k` is no humantime letter, so it is a
@@ -75,13 +74,13 @@ command either way.
 
 ## Keys (window)
 
-The window answers to the same keys. `d` is a letter at all times here too,
-and `Ctrl+D` toggles the dry run even while the field has the keyboard,
-because a text field has no use for the chord. While the field is focused it
-keeps its other letters - space types a space - and only the keys a text
-field has no use for (`Up` `Down` `Enter` `Esc` `Ctrl+D`) are commands either
-way; the terminal affords the same while its timer is idle. `Esc` leaves the
-field first, then aborts a countdown, then quits, one press at a time.
+The window answers to the same keys, and `Ctrl+D` toggles the dry run even
+while the field has the keyboard, because a text field has no use for the
+chord. While the field is focused it keeps its other letters - space types a
+space - and only the keys a text field has no use for (`Up` `Down` `Enter`
+`Esc` `Ctrl+D`) are commands either way; the terminal affords the same while
+its timer is idle. `Esc` leaves the field first, then aborts a countdown,
+then quits, one press at a time.
 Arming - `Enter`, the button, the hint - waits for an idle countdown: a
 running one is never silently replaced. The status bar shows the keys as the
 terminal's footer does, and each hint that stands for a single command can
@@ -89,12 +88,11 @@ be clicked instead of pressed.
 
 ## How sleepy knows what the machine can do
 
-systemd 262 removed `systemctl can-sleep`, so sleepy asks logind directly
-over D-Bus (`busctl call org.freedesktop.login1 /org/freedesktop/login1
-org.freedesktop.login1.Manager CanSleep`) and falls back to `systemctl
-can-*` on older systems. A `challenge` answer counts as possible: polkit
-gets to ask for a password when the time comes, not when the countdown
-starts.
+sleepy asks logind directly over D-Bus (`busctl call org.freedesktop.login1
+/org/freedesktop/login1 org.freedesktop.login1.Manager CanSleep`), falling
+back to `systemctl can-*` where logind has no answer. A `challenge` answer
+counts as possible: polkit gets to ask for a password when the time comes,
+not when the countdown starts.
 
 ## How sleepy keeps the screen on
 
