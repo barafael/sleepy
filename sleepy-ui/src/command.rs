@@ -238,7 +238,7 @@ mod tests {
             for hint in hints {
                 // Multi-command hints never are; and arm is not while a
                 // countdown runs, because arming waits for an idle one.
-                let clickable = !hint.keys.contains('/') && !(counting && hint.keys == "enter");
+                let clickable = !(hint.keys.contains('/') || counting && hint.keys == "enter");
                 assert_eq!(hint.command.is_some(), clickable, "{}", hint.keys);
             }
         }

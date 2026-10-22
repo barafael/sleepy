@@ -247,11 +247,13 @@ impl Probe for Fallback {
         let can = match action {
             SleepAction::Suspend | SleepAction::Shutdown => true,
             SleepAction::Hibernate => cfg!(target_os = "windows"),
-            SleepAction::HybridSleep | SleepAction::SuspendThenHibernate => false,
-            // The machine can run any script; whether sleepy offers to
-            // run *this* one is the file's business, and `detect` asks
-            // the file itself.
-            SleepAction::RunScript => false,
+            // Hybrid sleep and suspend-then-hibernate are logind extras
+            // the fallback never offers. And the machine can run any
+            // script; whether sleepy offers to run *this* one is the
+            // file's business, and `detect` asks the file itself.
+            SleepAction::HybridSleep | SleepAction::SuspendThenHibernate | SleepAction::RunScript => {
+                false
+            }
         };
         Some(can)
     }
@@ -344,7 +346,7 @@ mod tests {
 
     #[test]
     fn a_machine_that_answers_nothing_sleeps_not() {
-        assert!(detect_with(&[&Vec::new()]).is_empty());
+        assert_eq!(detect_with(&[&Vec::new()]), [] as [SleepAction; 0]);
     }
 
     /// A probe with one fixed answer for every action, including a shrug.

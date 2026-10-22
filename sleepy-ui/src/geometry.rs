@@ -1,7 +1,7 @@
 //! Remembers the window's size and position between runs.
 //!
 //! eframe can persist the window itself, but winit reports the client area's
-//! position as the frame's under XWayland, so every restore placed the frame
+//! position as the frame's under `XWayland`, so every restore placed the frame
 //! where the client area had been: the window crept down by its title bar on
 //! each launch. This measures where the window ends up relative to where it
 //! was asked to go, and saves positions with that shift taken out, so they

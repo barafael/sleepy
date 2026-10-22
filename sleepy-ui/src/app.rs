@@ -68,7 +68,7 @@ impl SleepyApp {
 impl eframe::App for SleepyApp {
     /// Remembers the window's geometry. Not in eframe's storage: the
     /// geometry tracker writes its own file, where the terminal sleepy's
-    /// settings already live and where the XWayland shift can be undone.
+    /// settings already live and where the `XWayland` shift can be undone.
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
         if let Some(window) = &self.window {
             window.save(&self.ctx);

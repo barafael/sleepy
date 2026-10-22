@@ -40,7 +40,7 @@ fn command(key: KeyEvent, idle: bool) -> Option<Command> {
         // edited (idle) it is not a command but a character; once a
         // countdown runs it pauses.
         KeyCode::Char(' ') if !ctrl && !idle => Some(Command::PauseResume),
-        KeyCode::Char('+') | KeyCode::Char('=') if !ctrl => Some(Command::Longer),
+        KeyCode::Char('+' | '=') if !ctrl => Some(Command::Longer),
         KeyCode::Char('-') if !ctrl => Some(Command::Shorter),
         _ => None,
     }

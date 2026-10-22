@@ -60,6 +60,11 @@ impl When {
 
 /// Parses a when from an input field: the clock's answer if the text
 /// wears the clock's shape, humantime's otherwise.
+///
+/// # Errors
+///
+/// [`ParseError::Clock`] when the text wears the clock's shape but not
+/// its range, and whatever [`parse_duration`] says about the rest.
 pub fn parse_when(input: &str) -> Result<When, ParseError> {
     let text = input.trim();
     if text.contains(':') {
@@ -72,6 +77,12 @@ pub fn parse_when(input: &str) -> Result<When, ParseError> {
 }
 
 /// Parses a duration from an input field.
+///
+/// # Errors
+///
+/// [`ParseError::Empty`] when nothing was typed, [`ParseError::Zero`]
+/// when the answer is zero, and [`ParseError::Invalid`] when humantime
+/// does not know the text.
 pub fn parse_duration(input: &str) -> Result<Duration, ParseError> {
     let text = input.trim();
     if text.is_empty() {
@@ -343,7 +354,7 @@ mod tests {
         // And the durations still answer, through the same door.
         assert_eq!(
             parse_when("1h30m"),
-            Ok(When::After(Duration::from_secs(5400)))
+            Ok(When::After(Duration::from_mins(90)))
         );
     }
 

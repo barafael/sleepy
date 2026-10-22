@@ -146,18 +146,15 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = Vec::new();
     for (key, what) in keys {
         spans.push(Span::from(" ").dark_gray());
-        match what.split_once(key) {
-            // A one-letter key that starts its word is shown inside the
-            // word - quit with the q picked out - because "qquit" reads
-            // like a hiccup.
-            Some(("", rest)) => {
-                spans.push(Span::from(key).bold().underlined());
-                spans.push(Span::from(rest).dark_gray());
-            }
-            _ => {
-                spans.push(Span::from(key).bold());
-                spans.push(Span::from(format!(" {what}")).dark_gray());
-            }
+        // A one-letter key that starts its word is shown inside the
+        // word - quit with the q picked out - because "qquit" reads
+        // like a hiccup.
+        if let Some(("", rest)) = what.split_once(key) {
+            spans.push(Span::from(key).bold().underlined());
+            spans.push(Span::from(rest).dark_gray());
+        } else {
+            spans.push(Span::from(key).bold());
+            spans.push(Span::from(format!(" {what}")).dark_gray());
         }
     }
     if app.controller.backend == sleepy_core::Backend::DryRun {

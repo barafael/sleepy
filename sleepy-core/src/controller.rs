@@ -93,6 +93,11 @@ impl Controller {
 
     /// What the field means right now: a duration or a clock time, or
     /// the reason it is neither yet.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`crate::ParseError`] the field earns: empty, unreadable,
+    /// zero, or a clock time out of range.
     pub fn when(&self) -> Result<When, ParseError> {
         parse_when(&self.input)
     }
@@ -214,6 +219,11 @@ impl Controller {
     /// the countdown just ended, in which case `fired` now names the
     /// action and the frontend should [`Self::perform`] it - after one
     /// last draw saying so, if it can.
+    ///
+    /// # Panics
+    ///
+    /// If a fired countdown carries no action, which is a bug in the
+    /// timer's state machine rather than a machine answer.
     pub fn tick(&mut self, now: Instant) -> bool {
         if self.timer.tick(now) == TimerEvent::Fired {
             // A fired countdown was armed with an action; if that ever
@@ -385,7 +395,7 @@ mod tests {
         controller.apply(Command::Shorter);
         assert_eq!(
             controller.timer.remaining(),
-            before - Duration::from_secs(60)
+            before.checked_sub(Duration::from_secs(60)).unwrap()
         );
         controller.apply(Command::Longer);
         assert_eq!(controller.timer.remaining(), before);
@@ -405,7 +415,7 @@ mod tests {
         let deadline = controller.deadline().unwrap();
         assert_eq!(format_clock(deadline), "23:45");
         let left = deadline.duration_since(SystemTime::now()).unwrap();
-        assert!(left <= Duration::from_secs(86_400));
+        assert!(left <= Duration::from_hours(24));
     }
 
     #[test]

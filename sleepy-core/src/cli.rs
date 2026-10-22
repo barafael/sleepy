@@ -30,6 +30,11 @@ pub struct Options {
 impl Options {
     /// Parses the command line; `Ok(None)` means the help or the version
     /// was printed.
+    ///
+    /// # Errors
+    ///
+    /// A message naming what the command line got wrong, as
+    /// [`Self::parse_with`] describes.
     pub fn parse(
         args: impl Iterator<Item = String>,
         help: &str,
@@ -40,6 +45,12 @@ impl Options {
 
     /// A hand-written parser, with `detect` a parameter so the tests never
     /// ask the machine what it can do.
+    ///
+    /// # Errors
+    ///
+    /// A message naming what the command line got wrong: an unknown
+    /// option, an unreadable when, an unknown mode, a mode this machine
+    /// does not offer, or too many arguments.
     pub fn parse_with(
         args: impl Iterator<Item = String>,
         help: &str,
@@ -116,7 +127,7 @@ mod tests {
     /// A machine that offers suspend and nothing else.
     fn parse(args: &[&str]) -> Result<Option<Options>, String> {
         Options::parse_with(
-            args.iter().map(|arg| arg.to_string()),
+            args.iter().map(ToString::to_string),
             "help",
             "version",
             || vec![SleepAction::Suspend],
@@ -200,7 +211,7 @@ mod tests {
         let options = Options::parse_with(
             ["sleepy", "5m", "run-script"]
                 .iter()
-                .map(|arg| arg.to_string()),
+                .map(ToString::to_string),
             "help",
             "version",
             || vec![SleepAction::Suspend, SleepAction::RunScript],

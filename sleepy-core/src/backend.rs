@@ -121,6 +121,14 @@ pub fn describe(action: SleepAction) -> Option<String> {
 /// the other side of the sleep, so callers should treat `Ok` as "leave
 /// now": print nothing more, draw nothing more, exit. (A script returns
 /// when it is done; the caller's leave-now manners do it no harm.)
+///
+/// # Errors
+///
+/// [`Error::Unsupported`] when this platform has no command for the
+/// action, [`Error::Spawn`] when that command cannot be started (or the
+/// script has gone missing since the countdown was armed),
+/// [`Error::Refused`] when the command ran and said no, and
+/// [`Error::ScriptFailed`] when a script ended with an error.
 pub fn execute(action: SleepAction, backend: Backend) -> Result<(), Error> {
     let Some((program, args)) = command_for(action) else {
         return Err(Error::Unsupported(action));
@@ -188,10 +196,10 @@ pub enum Error {
 impl PartialEq for Error {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Unsupported(a), Self::Unsupported(b)) => a == b,
-            (Self::Spawn { program: a, .. }, Self::Spawn { program: b, .. }) => a == b,
-            (Self::Refused { action: a, .. }, Self::Refused { action: b, .. }) => a == b,
-            (Self::ScriptFailed { program: a }, Self::ScriptFailed { program: b }) => a == b,
+            (Self::Unsupported(a), Self::Unsupported(b))
+            | (Self::Refused { action: a, .. }, Self::Refused { action: b, .. }) => a == b,
+            (Self::Spawn { program: a, .. }, Self::Spawn { program: b, .. })
+            | (Self::ScriptFailed { program: a }, Self::ScriptFailed { program: b }) => a == b,
             _ => false,
         }
     }

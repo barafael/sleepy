@@ -360,7 +360,7 @@ fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
             let action = app
                 .controller
                 .fired
-                .map_or(String::from("sleep the machine"), |mode| mode.firing());
+                .map_or(String::from("sleep the machine"), sleepy_core::SleepAction::firing);
             ui.label(RichText::new(format!("time! {action}...")).size(24.0));
             if app.controller.backend == Backend::DryRun
                 && let Some(command) = app.controller.fired.and_then(describe)
