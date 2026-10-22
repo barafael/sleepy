@@ -9,7 +9,7 @@
 
 use crate::action::SleepAction;
 use crate::backend::Backend;
-use crate::input::parse_duration;
+use crate::input::parse_when;
 
 /// What the command line decided before a single key was pressed.
 #[derive(Debug)]
@@ -18,8 +18,9 @@ pub struct Options {
     pub backend: Backend,
     /// Whether to hold the screen awake while the countdown runs.
     pub keep_screen_on: bool,
-    /// The duration as typed, if one was; naming it arms the countdown.
-    pub duration: Option<String>,
+    /// The when as typed, if one was: a duration or a clock time;
+    /// naming it arms the countdown.
+    pub when: Option<String>,
     /// The mode asked for, if any.
     pub mode: Option<SleepAction>,
     /// What this machine offers, detected once here for the app to keep.
@@ -47,7 +48,7 @@ impl Options {
     ) -> Result<Option<Self>, String> {
         let mut backend = Backend::Real;
         let mut keep_screen_on = false;
-        let mut duration = None;
+        let mut when = None;
         let mut mode = None;
         let mut positionals = 0;
         for arg in args.skip(1) {
@@ -66,7 +67,7 @@ impl Options {
                     return Err(format!("unknown option {arg} (try --help)"));
                 }
                 _ if positionals == 0 => {
-                    duration = Some(arg);
+                    when = Some(arg);
                     positionals += 1;
                 }
                 _ if positionals == 1 => {
@@ -81,8 +82,10 @@ impl Options {
         }
         // Check the answers before the screen opens, where errors go
         // unread and unheard.
-        if let Some(text) = &duration {
-            parse_duration(text).map_err(|error| format!("bad duration {text}: {error}"))?;
+        if let Some(text) = &when {
+            parse_when(text).map_err(|error| {
+                format!("cannot read {text} as a duration or a clock time: {error}")
+            })?;
         }
         let modes = detected();
         if let Some(want) = mode
@@ -97,7 +100,7 @@ impl Options {
         Ok(Some(Self {
             backend,
             keep_screen_on,
-            duration,
+            when,
             mode,
             modes,
         }))
@@ -137,11 +140,11 @@ mod tests {
         let options = parse(&["sleepy", "45s", "--dry-run", "--keep-screen-on"])
             .unwrap()
             .unwrap();
-        assert_eq!(options.duration.as_deref(), Some("45s"));
+        assert_eq!(options.when.as_deref(), Some("45s"));
         assert_eq!(options.backend, Backend::DryRun);
         assert!(options.keep_screen_on);
         let options = parse(&["sleepy"]).unwrap().unwrap();
-        assert!(options.duration.is_none());
+        assert!(options.when.is_none());
         assert_eq!(options.backend, Backend::Real);
         assert!(!options.keep_screen_on);
         // The offerings are detected once and carried along.
@@ -160,8 +163,12 @@ mod tests {
         assert!(
             parse(&["sleepy", "soon"])
                 .unwrap_err()
-                .contains("bad duration")
+                .contains("cannot read")
         );
+        // A clock out of the day's range is its own kind of wrong.
+        let error = parse(&["sleepy", "25:00"]).unwrap_err();
+        assert!(error.contains("cannot read"), "{error}");
+        assert!(error.contains("clock time"), "{error}");
         assert!(
             parse(&["sleepy", "45s", "nap"])
                 .unwrap_err()
@@ -177,5 +184,12 @@ mod tests {
                 .unwrap_err()
                 .contains("unexpected")
         );
+    }
+
+    #[test]
+    fn a_clock_time_is_a_when_too() {
+        let options = parse(&["sleepy", "23:45", "suspend"]).unwrap().unwrap();
+        assert_eq!(options.when.as_deref(), Some("23:45"));
+        assert_eq!(options.mode, Some(SleepAction::Suspend));
     }
 }

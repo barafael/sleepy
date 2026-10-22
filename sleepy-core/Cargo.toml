@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+chrono = { workspace = true }
 humantime = { workspace = true }
 strum = { workspace = true }
 thiserror = { workspace = true }

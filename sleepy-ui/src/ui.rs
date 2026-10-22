@@ -12,7 +12,7 @@ use crate::command;
 use crate::theme;
 use egui::{Align, Color32, CursorIcon, Label, Layout, Response, RichText, Sense, TextStyle, Ui};
 use humantime::format_duration;
-use sleepy_core::{Backend, Command, Status, describe};
+use sleepy_core::{Backend, Command, Status, When, describe, format_clock};
 use std::time::Duration;
 
 /// Horizontal gap between unrelated items.
@@ -194,7 +194,7 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
     let p = theme::of(ui);
     let field = egui::TextEdit::singleline(&mut app.controller.input)
         .id(field_id())
-        .hint_text("45s, 30 min, 1h30m")
+        .hint_text("45s, 30 min, 1h30m, 23:45")
         .font(TextStyle::Monospace)
         .desired_width(f32::INFINITY);
     let response = ui.add(field);
@@ -204,9 +204,14 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
         response.request_focus();
         app.focus_field = false;
     }
-    match app.controller.duration() {
-        Ok(duration) => {
+    match app.controller.when() {
+        // The field echoes its own meaning in the grammar it was typed
+        // in, as it does in the terminal.
+        Ok(When::After(duration)) => {
             ui.label(RichText::new(format!("-> in {}", format_duration(duration))).color(p.weak));
+        }
+        Ok(When::At(time)) => {
+            ui.label(RichText::new(format!("-> at {}", time.format("%H:%M"))).color(p.weak));
         }
         Err(error) => {
             ui.label(RichText::new(error.to_string()).color(p.red));
@@ -268,7 +273,7 @@ fn draw_buttons(app: &mut SleepyApp, ui: &mut Ui) {
         // one is never silently replaced.
         let can_arm = !counting
             && app.controller.selected_action().is_some()
-            && app.controller.duration().is_ok();
+            && app.controller.when().is_ok();
         if ui
             .add_enabled(can_arm, egui::Button::new("arm"))
             .on_hover_text("start the countdown (or press enter)")
@@ -333,7 +338,12 @@ fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
             let headline = if app.controller.timer.status() == Status::Paused {
                 format!("paused, {left} left - press space to resume")
             } else {
-                format!("{action} in {left}")
+                match app.controller.deadline() {
+                    // The wall clock answers the question a countdown
+                    // only asks in remainders: when, exactly.
+                    Some(at) => format!("{action} in {left}, at {}", format_clock(at)),
+                    None => format!("{action} in {left}"),
+                }
             };
             ui.label(RichText::new(headline).strong().color(p.strong));
             ui.add(egui::ProgressBar::new(app.controller.timer.progress()).text(&left));

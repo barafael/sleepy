@@ -13,7 +13,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Gauge, List, ListItem, ListState, Paragraph},
 };
-use sleepy_core::{SleepAction, Status};
+use sleepy_core::{SleepAction, Status, When, format_clock};
 use std::time::Duration;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -46,7 +46,7 @@ fn draw_modes(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_when(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::bordered().title(" when (humantime: 45s, 30 min, 1h30m) ");
+    let block = Block::bordered().title(" when (45s, 30 min, 1h30m, 23:45) ");
     let [field, hint] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(block.inner(area));
     frame.render_widget(block, area);
@@ -56,9 +56,16 @@ fn draw_when(frame: &mut Frame, app: &App, area: Rect) {
         field.x + u16::try_from(app.controller.input.chars().count()).unwrap_or(0),
         field.y,
     ));
-    match app.controller.duration() {
-        Ok(duration) => frame.render_widget(
+    match app.controller.when() {
+        // The field echoes its own meaning in the grammar it was typed
+        // in: a duration counts off a stretch of time, a clock time
+        // names the moment it walks up to.
+        Ok(When::After(duration)) => frame.render_widget(
             Paragraph::new(format!("-> in {}", format_duration(duration)).dark_gray()),
+            hint,
+        ),
+        Ok(When::At(time)) => frame.render_widget(
+            Paragraph::new(format!("-> at {}", time.format("%H:%M")).dark_gray()),
             hint,
         ),
         Err(error) => frame.render_widget(Paragraph::new(error.to_string().red()), hint),
@@ -96,7 +103,12 @@ fn draw_countdown(frame: &mut Frame, app: &App, area: Rect) {
             let text = if app.controller.timer.status() == Status::Paused {
                 format!("paused, {left} left - press space to resume")
             } else {
-                format!("{action} in {left}")
+                match app.controller.deadline() {
+                    // The wall clock answers the question a countdown
+                    // only asks in remainders: when, exactly.
+                    Some(at) => format!("{action} in {left}, at {}", format_clock(at)),
+                    None => format!("{action} in {left}"),
+                }
             };
             frame.render_widget(Paragraph::new(text.bold()), headline);
             let gauge = Gauge::default()

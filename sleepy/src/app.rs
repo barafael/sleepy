@@ -107,7 +107,7 @@ mod tests {
         App::new(Options {
             backend: Backend::Real,
             keep_screen_on: false,
-            duration: None,
+            when: None,
             mode: None,
             modes: vec![SleepAction::Suspend],
         })

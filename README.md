@@ -2,19 +2,20 @@
 
 **Count down to sleep. The machine's, not yours.**
 
-sleepy takes a duration a human can read (`45s`, `30 min`, `1h30m`), counts
-down, and puts the machine to sleep when the time comes. Pause, resume or
-abort while it runs; `--dry-run` — or `Ctrl+D` in the terminal, or the
-checkbox in the window — counts down for real and then only says what it
-would have run. `--keep-screen-on` holds off screen blanking while the
-countdown runs, so you can watch something until the moment comes. Two
-frontends share one core: a terminal app and a window.
+sleepy takes a when a human can read - a duration (`45s`, `30 min`, `1h30m`)
+or a clock time (`23:45`, the next one to come) - counts down, and puts the
+machine to sleep when the time comes. Pause, resume or abort while it runs;
+`--dry-run` — or `Ctrl+D` in the terminal, or the checkbox in the window —
+counts down for real and then only says what it would have run.
+`--keep-screen-on` holds off screen blanking while the countdown runs, so you
+can watch something until the moment comes. Two frontends share one core: a
+terminal app and a window.
 
 ## Crates
 
 | Crate | What it is |
 |---|---|
-| `sleepy-core` | The library: the command line both frontends share, the controller they drive - arm, pause, toggle, fire - sleep actions, capability detection, the timer, the screen guard, humantime parsing. No terminal, no window - everything here is testable headless. |
+| `sleepy-core` | The library: the command line both frontends share, the controller they drive - arm, pause, toggle, fire - sleep actions, capability detection, the timer, the screen guard, humantime and clock parsing. No terminal, no window - everything here is testable headless. |
 | `sleepy` | The terminal app: ratatui and crossterm, no extra framework. |
 | `sleepy-ui` | The window: eframe and egui, dressed in gruvbox - dark or light, as the desktop prefers. Operable by the terminal's keys or entirely by mouse; remembers its geometry. |
 
@@ -24,6 +25,7 @@ frontends share one core: a terminal app and a window.
 sleepy                     # open the terminal and decide interactively
 sleepy 30min               # arm thirty minutes of suspend, right away
 sleepy 1h hibernate        # an hour, hibernating, if this machine can
+sleepy 23:45               # sleep when the clock reads it next
 sleepy 45s --dry-run       # count down, then report what would have run
 sleepy 1h poweroff         # an hour, then off; `shutdown` names it too
 sleepy 30min --keep-screen-on  # stay visible until the time comes
@@ -33,6 +35,10 @@ sleepy 30min --keep-screen-on  # stay visible until the time comes
 while its window is hidden - a minimised sleepy still puts the machine to
 sleep on time.
 
+A running countdown answers *when exactly?* on its headline: beside the
+remaining time, `at 23:45` gives the clock's own answer - the same answer a
+typed clock time promised.
+
 Modes are `suspend`, `hibernate`, `hybrid-sleep`, `suspend-then-hibernate`
 and `poweroff` (`shutdown` names it too); only the ones this machine offers
 are ever on offer.
@@ -41,7 +47,7 @@ are ever on offer.
 
 | Key | Action |
 |---|---|
-| typing | edit the duration field |
+| typing | edit the when field: `30 min` or `23:45` |
 | `Up` `Down` `Tab` | pick the mode |
 | `Ctrl+D` | toggle the dry run: talk about sleeping, do nothing |
 | `k` | toggle keep-awake: the screen stays on while it counts |

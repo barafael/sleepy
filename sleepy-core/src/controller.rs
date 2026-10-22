@@ -11,9 +11,9 @@ use crate::awake::KeepAwake;
 use crate::backend::{Backend, Error, execute};
 use crate::cli::Options;
 use crate::command::Command;
-use crate::input::{ParseError, parse_duration};
+use crate::input::{ParseError, When, parse_when};
 use crate::timer::{Event as TimerEvent, Status, Timer};
-use std::time::{Duration, Instant};
+use std::time::{Instant, SystemTime};
 
 /// The duration offered to a user who types nothing.
 pub const DEFAULT_DURATION: &str = "30 min";
@@ -57,12 +57,12 @@ impl Controller {
             .mode
             .and_then(|want| options.modes.iter().position(|have| *have == want))
             .unwrap_or(0);
-        let arm = options.duration.is_some();
+        let arm = options.when.is_some();
         let mut controller = Self {
             running: true,
             modes: options.modes,
             selected,
-            input: options.duration.unwrap_or_else(|| DEFAULT_DURATION.into()),
+            input: options.when.unwrap_or_else(|| DEFAULT_DURATION.into()),
             timer: Timer::new(),
             backend: options.backend,
             keep_screen_on: options.keep_screen_on,
@@ -91,21 +91,38 @@ impl Controller {
         self.modes.get(self.selected).copied()
     }
 
-    /// What the duration field means right now: a duration, or the reason
-    /// it is not one yet.
-    pub fn duration(&self) -> Result<Duration, ParseError> {
-        parse_duration(&self.input)
+    /// What the field means right now: a duration or a clock time, or
+    /// the reason it is neither yet.
+    pub fn when(&self) -> Result<When, ParseError> {
+        parse_when(&self.input)
+    }
+
+    /// When the running countdown will end on the wall clock, which the
+    /// frontends show beside the remaining time so `at 23:45` answers
+    /// "when exactly?" without arithmetic. A paused countdown has no
+    /// deadline - it would move with the pause - and an idle one has
+    /// nothing to promise.
+    pub fn deadline(&self) -> Option<SystemTime> {
+        match self.timer.status() {
+            Status::Armed => Some(SystemTime::now() + self.timer.remaining()),
+            Status::Idle | Status::Paused | Status::Fired => None,
+        }
     }
 
     /// Arms the highlighted mode with the typed duration; refuses - and
     /// lets the screen show why - when either is missing. A finished
     /// countdown's report is cleared with the new arming.
     pub fn arm_selected(&mut self) -> bool {
-        match (self.selected_action(), parse_duration(&self.input)) {
-            (Some(action), Ok(duration)) => {
+        match (self.selected_action(), parse_when(&self.input)) {
+            (Some(action), Ok(when)) => {
                 self.fired = None;
                 self.failure = None;
-                let armed = self.timer.arm(action, duration);
+                // A clock time becomes the countdown that reaches it:
+                // the timer itself stays monotonic, knowing only how
+                // long is left.
+                let armed = self
+                    .timer
+                    .arm(action, when.duration_from(SystemTime::now()));
                 if armed && self.keep_screen_on {
                     self.awake.start();
                 }
@@ -229,8 +246,12 @@ impl Controller {
 }
 
 #[cfg(test)]
+// A test that cannot get its answer is broken, not a machine that said no.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::input::format_clock;
+    use std::time::Duration;
 
     /// A controller built by hand, so the tests never ask the machine what
     /// it can do (`detect` would spawn processes here).
@@ -238,7 +259,7 @@ mod tests {
         Controller::new(Options {
             backend: Backend::Real,
             keep_screen_on: false,
-            duration: None,
+            when: None,
             mode: None,
             modes: vec![SleepAction::Suspend],
         })
@@ -249,7 +270,7 @@ mod tests {
         let controller = Controller::new(Options {
             backend: Backend::Real,
             keep_screen_on: false,
-            duration: Some("45s".into()),
+            when: Some("45s".into()),
             mode: None,
             modes: vec![SleepAction::Suspend],
         });
@@ -262,7 +283,7 @@ mod tests {
         let controller = Controller::new(Options {
             backend: Backend::Real,
             keep_screen_on: false,
-            duration: None,
+            when: None,
             mode: Some(SleepAction::Hibernate),
             modes: vec![SleepAction::Suspend, SleepAction::Hibernate],
         });
@@ -307,7 +328,7 @@ mod tests {
         let mut controller = Controller::new(Options {
             backend: Backend::Real,
             keep_screen_on: false,
-            duration: None,
+            when: None,
             mode: None,
             modes: vec![SleepAction::Suspend, SleepAction::Hibernate],
         });
@@ -372,5 +393,30 @@ mod tests {
         controller.abort();
         controller.apply(Command::PauseResume);
         assert_eq!(controller.timer.status(), Status::Idle);
+    }
+
+    #[test]
+    fn a_clock_time_arms_for_the_next_one_to_come() {
+        let mut controller = controller();
+        controller.input = "23:45".into();
+        assert!(controller.arm_selected());
+        // Whatever time this test runs, the deadline is the next 23:45,
+        // and never more than a day away.
+        let deadline = controller.deadline().unwrap();
+        assert_eq!(format_clock(deadline), "23:45");
+        let left = deadline.duration_since(SystemTime::now()).unwrap();
+        assert!(left <= Duration::from_secs(86_400));
+    }
+
+    #[test]
+    fn only_a_running_countdown_has_a_deadline() {
+        let mut controller = controller();
+        assert_eq!(controller.deadline(), None);
+        controller.apply(Command::Arm);
+        assert!(controller.deadline().is_some());
+        // A paused countdown has no deadline: it would move with the
+        // pause, and a promise that drifts is no promise.
+        controller.apply(Command::PauseResume);
+        assert_eq!(controller.deadline(), None);
     }
 }
