@@ -16,6 +16,9 @@ mod ui;
 use app::SleepyApp;
 use sleepy_core::Options;
 
+/// The hourglass the window and the taskbar wear, drawn in `assets/`.
+const ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
+
 fn main() -> eframe::Result {
     let options = match Options::parse(std::env::args(), HELP, VERSION) {
         Ok(Some(options)) => options,
@@ -27,11 +30,17 @@ fn main() -> eframe::Result {
         }
     };
     let saved = geometry::Geometry::load();
-    let viewport = egui::ViewportBuilder::default()
+    let mut viewport = egui::ViewportBuilder::default()
         .with_title("sleepy")
         .with_app_id("sleepy-ui")
         .with_inner_size([560.0, 400.0])
         .with_min_inner_size([440.0, 320.0]);
+    // The hourglass is embedded in the binary, so a failure to decode it
+    // would be a build bug, not a runtime one; were it ever to happen,
+    // the window simply goes iconless rather than refusing to open.
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(ICON_PNG) {
+        viewport = viewport.with_icon(icon);
+    }
     let native_options = eframe::NativeOptions {
         viewport: match saved {
             Some(geometry) => geometry.apply(viewport),

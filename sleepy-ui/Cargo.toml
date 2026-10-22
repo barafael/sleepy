@@ -19,6 +19,11 @@ eframe = { workspace = true, features = ["x11", "wayland"] }
 egui = { workspace = true }
 humantime = { workspace = true }
 
+# An .exe carries its icon in a resource table; build.rs writes it. The
+# dependency exists only where there is an .exe to write it into.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 # Desktop theme preference (winit reports none on Linux).
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { workspace = true }
