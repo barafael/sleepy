@@ -352,8 +352,8 @@ fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
             let action = app
                 .controller
                 .fired
-                .map_or(String::from("sleep"), |mode| mode.label().to_lowercase());
-            ui.label(RichText::new(format!("time! {action} the machine...")).size(24.0));
+                .map_or(String::from("sleep the machine"), |mode| mode.firing());
+            ui.label(RichText::new(format!("time! {action}...")).size(24.0));
             if app.controller.backend == Backend::DryRun
                 && let Some(command) = app.controller.fired.and_then(describe)
             {

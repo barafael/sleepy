@@ -123,10 +123,9 @@ fn draw_countdown(frame: &mut Frame, app: &App, area: Rect) {
                 .timer
                 .action()
                 .unwrap_or(SleepAction::Suspend)
-                .label()
-                .to_lowercase();
+                .firing();
             frame.render_widget(
-                Paragraph::new(format!("time! {action} the machine...").bold()),
+                Paragraph::new(format!("time! {action}...").bold()),
                 headline,
             );
         }

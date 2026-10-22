@@ -1,16 +1,20 @@
 //! The ways a machine can stop, and what this one can actually do.
 
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
-/// A way to end the machine's day, listed from quickest to return from to
-/// most final. Which of these exist is up to the firmware and the
-/// operating system, so [`detect`] asks instead of assuming.
+/// What the countdown does when it ends, listed from quickest to return
+/// from to most final, ending with the one whose business is not the
+/// machine's. Which of the sleep modes exist is up to the firmware and
+/// the operating system, so [`detect`] asks instead of assuming; the
+/// script exists because the user left one in the working directory.
 ///
-/// The words are systemd's, which double as sleepy's names for the modes
-/// on the command line; `strum` turns variant names into kebab-case, and
-/// `Shutdown` spells itself `poweroff` the way systemd does - while still
-/// answering to `shutdown`, the word a human reaches for.
+/// The words are systemd's - except `RunScript`, which is sleepy's own -
+/// and they double as sleepy's names for the modes on the command line;
+/// `strum` turns variant names into kebab-case, and `Shutdown` spells
+/// itself `poweroff` the way systemd does - while still answering to
+/// `shutdown`, the word a human reaches for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumString, Display, EnumIter)]
 #[strum(serialize_all = "kebab_case")]
 pub enum SleepAction {
@@ -31,6 +35,11 @@ pub enum SleepAction {
     /// booting again.
     #[strum(to_string = "poweroff", serialize = "shutdown")]
     Shutdown,
+    /// Run the script the user left in the working directory instead of
+    /// sleeping: `action.sh`, or `action.ps1` where the shell to honour
+    /// is PowerShell's. What the script does is the script's business -
+    /// sleepy only promises to run it when the countdown ends.
+    RunScript,
 }
 
 impl SleepAction {
@@ -46,23 +55,41 @@ impl SleepAction {
             Self::HybridSleep => "hybrid sleep",
             Self::SuspendThenHibernate => "suspend, then hibernate",
             Self::Shutdown => "shutdown (power off)",
+            Self::RunScript => "run-script",
         }
     }
 
-    /// The logind D-Bus method that answers whether this can happen now.
+    /// The words a finished countdown shows after "time!": what is being
+    /// done, to what.
+    ///
+    /// A match rather than `label` + " the machine" everywhere: running
+    /// a script is not something done to the machine, and copy that does
+    /// not read needs its own words.
+    pub fn firing(self) -> String {
+        match self {
+            Self::RunScript => "run the script".into(),
+            action => format!("{} the machine", action.label().to_lowercase()),
+        }
+    }
+
+    /// The logind D-Bus method that answers whether this can happen now,
+    /// for the actions logind is asked about at all.
     ///
     /// systemd 262 removed the `systemctl can-...` verbs, pointing at these
     /// methods instead; logind has answered them all along. A match rather
     /// than `Can` + name, because the mapping is irregular - `Suspend`
     /// asks `CanSleep` and `Shutdown` asks `CanPowerOff` - and an
     /// irregular mapping is what a match is for.
-    pub fn method(self) -> &'static str {
+    pub fn method(self) -> Option<&'static str> {
         match self {
-            Self::Suspend => "CanSleep",
-            Self::Hibernate => "CanHibernate",
-            Self::HybridSleep => "CanHybridSleep",
-            Self::SuspendThenHibernate => "CanSuspendThenHibernate",
-            Self::Shutdown => "CanPowerOff",
+            Self::Suspend => Some("CanSleep"),
+            Self::Hibernate => Some("CanHibernate"),
+            Self::HybridSleep => Some("CanHybridSleep"),
+            Self::SuspendThenHibernate => Some("CanSuspendThenHibernate"),
+            Self::Shutdown => Some("CanPowerOff"),
+            // logind is not asked about the user's script; the file
+            // itself is the whole answer.
+            Self::RunScript => None,
         }
     }
 }
@@ -101,7 +128,38 @@ pub fn detect() -> Vec<SleepAction> {
     let probes: [&dyn Probe; 1] = [&Fallback];
     // A machine where nobody can answer (no logind, no systemctl) gets the
     // assumptions in `Fallback` rather than an empty list.
-    detect_with(&probes)
+    let mut actions = detect_with(&probes);
+    // The script is not a capability of the machine but a promise the
+    // user left in the working directory, so it is not what the probes
+    // are asked about - the file's presence is the whole answer. It
+    // comes last, which is also where `iter` puts it.
+    if script_path().is_some() {
+        actions.push(SleepAction::RunScript);
+    }
+    actions
+}
+
+/// The script the [`SleepAction::RunScript`] countdown runs, when the
+/// user left one in the working directory: `action.sh`, or `action.ps1`
+/// on Windows, where the shell to honour is PowerShell's.
+pub fn script_path() -> Option<PathBuf> {
+    script_in(Path::new("."))
+}
+
+/// [`script_path`] with the directory spelled out, so the tests can
+/// look for a script without moving the whole process.
+fn script_in(dir: &Path) -> Option<PathBuf> {
+    let path = dir.join(script_name());
+    path.is_file().then_some(path)
+}
+
+/// The script's conventional name, per platform.
+pub(crate) fn script_name() -> &'static str {
+    if cfg!(windows) {
+        "action.ps1"
+    } else {
+        "action.sh"
+    }
 }
 
 /// Asks logind over D-Bus, the way systemd 262 wants you to.
@@ -114,13 +172,14 @@ pub struct Logind;
 #[cfg(target_os = "linux")]
 impl Probe for Logind {
     fn can(&self, action: SleepAction) -> Option<bool> {
+        let method = action.method()?;
         let reply = Command::new("busctl")
             .args([
                 "call",
                 "org.freedesktop.login1",
                 "/org/freedesktop/login1",
                 "org.freedesktop.login1.Manager",
-                action.method(),
+                method,
             ])
             .output()
             .ok()
@@ -139,6 +198,9 @@ pub struct Systemctl;
 #[cfg(target_os = "linux")]
 impl Probe for Systemctl {
     fn can(&self, action: SleepAction) -> Option<bool> {
+        // Only the sleep modes have a `can-...` verb; asking for
+        // `can-run-script` would just spawn a refusal.
+        action.method()?;
         let reply = Command::new("systemctl")
             .arg(format!("can-{action}"))
             .output()
@@ -186,19 +248,26 @@ impl Probe for Fallback {
             SleepAction::Suspend | SleepAction::Shutdown => true,
             SleepAction::Hibernate => cfg!(target_os = "windows"),
             SleepAction::HybridSleep | SleepAction::SuspendThenHibernate => false,
+            // The machine can run any script; whether sleepy offers to
+            // run *this* one is the file's business, and `detect` asks
+            // the file itself.
+            SleepAction::RunScript => false,
         };
         Some(can)
     }
 }
 
 #[cfg(test)]
+// A test that cannot get its answer is broken, not a machine that said no.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
     #[test]
     fn the_words_are_systemds() {
         // Display is the command-line word, and `poweroff` is the one a
-        // case conversion would get wrong, so pin the whole list.
+        // case conversion would get wrong, so pin the whole list. The
+        // last word is sleepy's own: no systemd ever had it.
         let words: Vec<String> = SleepAction::iter().map(|a| a.to_string()).collect();
         assert_eq!(
             words,
@@ -207,7 +276,8 @@ mod tests {
                 "hibernate",
                 "hybrid-sleep",
                 "suspend-then-hibernate",
-                "poweroff"
+                "poweroff",
+                "run-script"
             ]
         );
     }
@@ -228,12 +298,18 @@ mod tests {
     }
 
     #[test]
-    fn every_action_has_a_logind_method() {
+    fn every_sleep_action_has_a_logind_method() {
         for action in SleepAction::iter() {
-            assert!(
-                action.method().starts_with("Can"),
-                "{action} has no Can* method"
-            );
+            let method = action.method();
+            if action == SleepAction::RunScript {
+                // logind is not asked about the user's script.
+                assert_eq!(method, None);
+            } else {
+                assert!(
+                    method.is_some_and(|m| m.starts_with("Can")),
+                    "{action} has no Can* method"
+                );
+            }
         }
     }
 
@@ -289,6 +365,19 @@ mod tests {
             [SleepAction::Suspend]
         );
         // And the one that answers first is not overruled by the next.
-        assert_eq!(detect_with(&[&Scripted(Some(true)), &Vec::new()]).len(), 5);
+        assert_eq!(detect_with(&[&Scripted(Some(true)), &Vec::new()]).len(), 6);
+    }
+
+    #[test]
+    fn the_script_is_found_only_where_it_was_left() {
+        // The file's presence in the directory is the whole detection;
+        // a directory of one's own, so the test never asks the real
+        // working directory about a script it does not own.
+        let dir = std::env::temp_dir().join(format!("sleepy-script-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(script_in(&dir), None);
+        std::fs::write(dir.join(script_name()), "#!/bin/sh\n").unwrap();
+        assert_eq!(script_in(&dir), Some(dir.join(script_name())));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

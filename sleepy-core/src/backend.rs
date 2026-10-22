@@ -24,6 +24,14 @@ pub enum Backend {
 /// Kept apart from running it so the frontends can promise what is coming
 /// and the tests can check it without sleeping anyone.
 pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
+    if action == SleepAction::RunScript {
+        // The user's own script, run where sleepy runs. Everywhere the
+        // file carries its own interpreter, the file *is* the command;
+        // Windows has no shebang to honour, so PowerShell is named -
+        // and asked to step around an execution policy that would
+        // refuse any script at all.
+        return Some(script_command());
+    }
     if cfg!(target_os = "linux") {
         // systemd takes the action's word as its verb, which is why the
         // `SleepAction` strings are spelled the way they are.
@@ -40,9 +48,12 @@ pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
                     "tell application \"System Events\" to shut down".into(),
                 ],
             )),
+            // `RunScript` was answered before the platform split; no
+            // platform's sleep verbs run a script.
             SleepAction::Hibernate
             | SleepAction::HybridSleep
-            | SleepAction::SuspendThenHibernate => None,
+            | SleepAction::SuspendThenHibernate
+            | SleepAction::RunScript => None,
         }
     } else if cfg!(target_os = "windows") {
         // SetSuspendState's first argument picks suspend (0) or hibernate
@@ -62,10 +73,34 @@ pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
                 "shutdown".into(),
                 vec!["/s".into(), "/t".into(), "0".into()],
             )),
-            SleepAction::HybridSleep | SleepAction::SuspendThenHibernate => None,
+            SleepAction::HybridSleep
+            | SleepAction::SuspendThenHibernate
+            | SleepAction::RunScript => None,
         }
     } else {
         None
+    }
+}
+
+/// The command that runs the user's script: the file itself where files
+/// carry their own interpreter (so the shebang decides), PowerShell by
+/// name where they do not.
+fn script_command() -> (String, Vec<String>) {
+    if cfg!(windows) {
+        (
+            "powershell".into(),
+            [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                crate::action::script_name(),
+            ]
+            .map(str::to_string)
+            .to_vec(),
+        )
+    } else {
+        (format!("./{}", crate::action::script_name()), Vec::new())
     }
 }
 
@@ -80,29 +115,46 @@ pub fn describe(action: SleepAction) -> Option<String> {
     )
 }
 
-/// Puts the machine to sleep now.
+/// Does the thing the countdown was armed for.
 ///
-/// On success the process is frozen inside this call and wakes up on the
-/// other side of the sleep, so callers should treat `Ok` as "leave now":
-/// print nothing more, draw nothing more, exit.
+/// On a real sleep the process is frozen inside this call and wakes up on
+/// the other side of the sleep, so callers should treat `Ok` as "leave
+/// now": print nothing more, draw nothing more, exit. (A script returns
+/// when it is done; the caller's leave-now manners do it no harm.)
 pub fn execute(action: SleepAction, backend: Backend) -> Result<(), Error> {
     let Some((program, args)) = command_for(action) else {
         return Err(Error::Unsupported(action));
     };
     match backend {
         Backend::DryRun => Ok(()),
-        Backend::Real => Command::new(&program)
-            .args(&args)
-            .status()
-            .map_err(|source| Error::Spawn {
-                program: program.clone(),
-                source,
-            })?
-            // systemctl exits non-zero when logind refuses, for example
-            // because another session is in the way.
-            .success()
-            .then_some(())
-            .ok_or(Error::Refused { action, program }),
+        Backend::Real => {
+            // A script that was there when the countdown was armed may
+            // be gone by the time it fires; name the script, not the
+            // shell that would have run it.
+            if action == SleepAction::RunScript && crate::action::script_path().is_none() {
+                return Err(Error::Spawn {
+                    program: crate::action::script_name().into(),
+                    source: io::Error::from(io::ErrorKind::NotFound),
+                });
+            }
+            Command::new(&program)
+                .args(&args)
+                .status()
+                .map_err(|source| Error::Spawn {
+                    program: program.clone(),
+                    source,
+                })?
+                // systemctl exits non-zero when logind refuses, for example
+                // because another session is in the way. A script that exits
+                // with an error has failed, not refused the machine.
+                .success()
+                .then_some(())
+                .ok_or(if action == SleepAction::RunScript {
+                    Error::ScriptFailed { program }
+                } else {
+                    Error::Refused { action, program }
+                })
+        }
     }
 }
 
@@ -125,6 +177,10 @@ pub enum Error {
         action: SleepAction,
         program: String,
     },
+    /// The script ran and ended badly - which is the script's verdict,
+    /// not the machine's.
+    #[error("{program} exited with an error")]
+    ScriptFailed { program: String },
 }
 
 // `io::Error` has no `PartialEq`, so compare the parts that matter: the
@@ -135,6 +191,7 @@ impl PartialEq for Error {
             (Self::Unsupported(a), Self::Unsupported(b)) => a == b,
             (Self::Spawn { program: a, .. }, Self::Spawn { program: b, .. }) => a == b,
             (Self::Refused { action: a, .. }, Self::Refused { action: b, .. }) => a == b,
+            (Self::ScriptFailed { program: a }, Self::ScriptFailed { program: b }) => a == b,
             _ => false,
         }
     }
@@ -170,7 +227,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_asks_systemctl_with_the_action_as_verb() {
-        for action in SleepAction::iter() {
+        // The script is no systemd verb; it was answered before the
+        // platform split.
+        for action in SleepAction::iter().filter(|a| *a != SleepAction::RunScript) {
             let (program, args) = command_for(action).expect("systemd knows all five");
             assert_eq!(program, "systemctl");
             assert_eq!(args, [action.to_string()]);
@@ -179,5 +238,31 @@ mod tests {
                 Some(format!("systemctl {action}").as_str())
             );
         }
+    }
+
+    #[test]
+    fn the_script_is_a_known_command_everywhere() {
+        // `detect` offers it wherever the file is; `execute` must be
+        // able to run what it offered, on every platform.
+        assert!(command_for(SleepAction::RunScript).is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_script_runs_itself() {
+        // The shebang decides the interpreter, so the file is the
+        // whole command - and the dry run promises exactly that.
+        assert_eq!(
+            describe(SleepAction::RunScript).as_deref(),
+            Some("./action.sh")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn the_script_runs_through_powershell() {
+        let (program, args) = command_for(SleepAction::RunScript).expect("powershell is named");
+        assert_eq!(program, "powershell");
+        assert_eq!(args.last().map(String::as_str), Some("action.ps1"));
     }
 }

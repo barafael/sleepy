@@ -28,6 +28,7 @@ sleepy 1h hibernate        # an hour, hibernating, if this machine can
 sleepy 23:45               # sleep when the clock reads it next
 sleepy 45s --dry-run       # count down, then report what would have run
 sleepy 1h poweroff         # an hour, then off; `shutdown` names it too
+sleepy 10m run-script      # when the time comes, run ./action.sh
 sleepy 30min --keep-screen-on  # stay visible until the time comes
 ```
 
@@ -42,6 +43,13 @@ typed clock time promised.
 Modes are `suspend`, `hibernate`, `hybrid-sleep`, `suspend-then-hibernate`
 and `poweroff` (`shutdown` names it too); only the ones this machine offers
 are ever on offer.
+
+`run-script` is the odd one out: instead of sleeping, it runs a script you
+left in the working directory - `action.sh` on Unix (run through its own
+shebang), `action.ps1` through PowerShell on Windows. It is on offer only
+while that file is there, and sleepy runs it with the same working directory
+and standard streams it has itself; a non-zero exit is reported as the
+script's own failure, not the machine's.
 
 ## Keys (terminal)
 

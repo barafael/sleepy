@@ -192,4 +192,24 @@ mod tests {
         assert_eq!(options.when.as_deref(), Some("23:45"));
         assert_eq!(options.mode, Some(SleepAction::Suspend));
     }
+
+    #[test]
+    fn the_script_is_a_mode_when_the_file_offers_it() {
+        // `run-script` is a mode like any other once the file is there;
+        // the detection itself is `detect`'s, not the parser's.
+        let options = Options::parse_with(
+            ["sleepy", "5m", "run-script"]
+                .iter()
+                .map(|arg| arg.to_string()),
+            "help",
+            "version",
+            || vec![SleepAction::Suspend, SleepAction::RunScript],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(options.mode, Some(SleepAction::RunScript));
+        // And refused, in the human's words, when it is not.
+        let error = parse(&["sleepy", "5m", "run-script"]).unwrap_err();
+        assert!(error.contains("does not offer run-script"), "{error}");
+    }
 }

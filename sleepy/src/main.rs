@@ -48,8 +48,11 @@ arguments:
   DURATION   when to sleep: humantime (45s, 30min, 1h30m) or a clock
              time (23:45) - the next one to come
              (default: 30 min; naming it arms the countdown at once)
-  MODE       which sleep to use: suspend, hibernate, hybrid-sleep,
-             suspend-then-hibernate, poweroff
+  MODE       what to do when the time comes: suspend, hibernate,
+             hybrid-sleep, suspend-then-hibernate, poweroff, or
+             run-script - run ./action.sh (action.ps1 through
+             PowerShell on Windows) instead of sleeping; offered
+             only while that file sits in the working directory
              (default: the first this machine offers)
 
 options:
