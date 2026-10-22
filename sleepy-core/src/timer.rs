@@ -33,7 +33,7 @@ pub enum Event {
 }
 
 /// A countdown to a [`SleepAction`].
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Timer {
     /// What will happen when the countdown ends.
     action: Option<SleepAction>,

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 const SETTLE: f64 = 1.0;
 
 /// Saved window size, position and state.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Geometry {
     /// Where to ask the window manager to put the window, if known.
     pub position: Option<Pos2>,
@@ -54,10 +54,10 @@ impl Geometry {
     }
 
     fn format(&self) -> String {
-        let (x, y) = match self.position {
-            Some(p) => (p.x.round().to_string(), p.y.round().to_string()),
-            None => ("-".into(), "-".into()),
-        };
+        let (x, y) = self.position.map_or_else(
+            || ("-".into(), "-".into()),
+            |p| (p.x.round().to_string(), p.y.round().to_string()),
+        );
         let (width, height) = (self.size.x.round(), self.size.y.round());
         format!("{x} {y} {width} {height} {}", u8::from(self.maximized))
     }

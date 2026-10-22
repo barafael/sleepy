@@ -80,10 +80,10 @@ fn draw_countdown(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
     match app.controller.timer.status() {
         Status::Idle => {
-            let text = match app.controller.selected_action() {
-                Some(action) => format!("press enter to arm the {} countdown", action.label()),
-                None => "this machine offers nothing to arm".to_string(),
-            };
+            let text = app.controller.selected_action().map_or_else(
+                || "this machine offers nothing to arm".to_string(),
+                |action| format!("press enter to arm the {} countdown", action.label()),
+            );
             frame.render_widget(Paragraph::new(text.dark_gray()), headline);
         }
         Status::Armed | Status::Paused => {

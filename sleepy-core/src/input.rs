@@ -68,10 +68,7 @@ impl When {
 pub fn parse_when(input: &str) -> Result<When, ParseError> {
     let text = input.trim();
     if text.contains(':') {
-        return match parse_clock(text) {
-            Some(time) => Ok(When::At(time)),
-            None => Err(ParseError::Clock),
-        };
+        return parse_clock(text).map(When::At).ok_or(ParseError::Clock);
     }
     parse_duration(input).map(When::After)
 }
@@ -120,7 +117,9 @@ fn parse_clock(text: &str) -> Option<Time> {
 
 /// Whether `typed` could still become a when: a valid when is its own
 /// prefix, and so is anything a few more characters could complete -
-/// `23:`, `30 mi`, `1h3`. The frontends ask before letting a character
+/// `23:`, `30 mi`, `1h3`.
+///
+/// The frontends ask before letting a character
 /// into the field, so the field holds nothing no when could wear; the
 /// keys that fall out - `k` among them - are commands at any moment.
 pub fn is_when_prefix(typed: &str) -> bool {
@@ -290,13 +289,11 @@ fn next_occurrence(target: Time, now: &Zoned) -> Zoned {
 pub fn format_clock(at: SystemTime) -> String {
     // Only a clock outside the years jiff can name falls short here;
     // an instant it cannot place has no wall clock to read.
-    match Timestamp::try_from(at) {
-        Ok(at) => at
-            .to_zoned(TimeZone::system())
+    Timestamp::try_from(at).map_or_else(|_| String::new(), |at| {
+        at.to_zoned(TimeZone::system())
             .strftime("%H:%M")
-            .to_string(),
-        Err(_) => String::new(),
-    }
+            .to_string()
+    })
 }
 
 /// Why the input is not a when yet.

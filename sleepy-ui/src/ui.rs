@@ -322,14 +322,14 @@ fn draw_buttons(app: &mut SleepyApp, ui: &mut Ui) {
     });
 }
 
-fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
+fn draw_countdown(app: &SleepyApp, ui: &mut Ui) {
     let p = theme::of(ui);
     match app.controller.timer.status() {
         Status::Idle => {
-            ui.weak(match app.controller.selected_action() {
-                Some(mode) => format!("press enter to arm the {} countdown", mode.label()),
-                None => "nothing to arm".to_string(),
-            });
+            ui.weak(app.controller.selected_action().map_or_else(
+                || "nothing to arm".to_string(),
+                |mode| format!("press enter to arm the {} countdown", mode.label()),
+            ));
         }
         Status::Armed | Status::Paused => {
             // Whole seconds: a countdown that jitters in microseconds is
@@ -342,7 +342,7 @@ fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
                 .controller
                 .timer
                 .action()
-                .map_or(String::from("sleep"), |mode| mode.label().to_lowercase());
+                .map_or_else(|| String::from("sleep"), |mode| mode.label().to_lowercase());
             let headline = if app.controller.timer.status() == Status::Paused {
                 format!("paused, {left} left - press space to resume")
             } else {
@@ -360,7 +360,7 @@ fn draw_countdown(app: &mut SleepyApp, ui: &mut Ui) {
             let action = app
                 .controller
                 .fired
-                .map_or(String::from("sleep the machine"), sleepy_core::SleepAction::firing);
+                .map_or_else(|| String::from("sleep the machine"), sleepy_core::SleepAction::firing);
             ui.label(RichText::new(format!("time! {action}...")).size(24.0));
             if app.controller.backend == Backend::DryRun
                 && let Some(command) = app.controller.fired.and_then(describe)

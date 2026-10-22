@@ -6,7 +6,9 @@ use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 
 /// What the countdown does when it ends, listed from quickest to return
 /// from to most final, ending with the one whose business is not the
-/// machine's. Which of the sleep modes exist is up to the firmware and
+/// machine's.
+///
+/// Which of the sleep modes exist is up to the firmware and
 /// the operating system, so [`detect`] asks instead of assuming; the
 /// script exists because the user left one in the working directory.
 ///
@@ -215,7 +217,7 @@ impl Probe for Systemctl {
 /// (busctl's `s "yes"`), or the whole reply when nothing is quoted
 /// (systemctl's bare `yes`).
 fn reply_word(reply: &str) -> &str {
-    reply.split('"').nth(1).unwrap_or(reply.trim())
+    reply.split('"').nth(1).unwrap_or_else(|| reply.trim())
 }
 
 /// Whether an answer word means the action can happen.
