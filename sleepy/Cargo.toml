@@ -16,3 +16,8 @@ anyhow = { workspace = true }
 crossterm = { workspace = true }
 humantime = { workspace = true }
 ratatui = { workspace = true }
+
+# The pty harness: a real terminal for the binary to take over, so the
+# tests can watch it take the screen and give it back.
+[dev-dependencies]
+portable-pty = "0.9"

@@ -110,9 +110,11 @@ unwraps outside tests.
 
 The timer is handed its clock (`tick(now)`), so the whole state machine -
 arm, pause, nudge, fire - is tested without waiting for anything. The
-terminal app is exercised through a real pty in a scratch harness, the
-window through its command line and its key map; the pixels themselves are
-left to the human.
+terminal app is exercised through a real pty (`sleepy/tests/pty.rs`): the
+binary takes over a terminal it does not know is fake, and the test reads
+the escape codes back - alternate screen on, deadline on the headline,
+screen handed back clean. The window is exercised through its command line
+and its key map; the pixels themselves are left to the human.
 
 ## License
 
