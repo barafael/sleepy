@@ -17,9 +17,9 @@ use app::SleepyApp;
 use sleepy_core::Options;
 
 fn main() -> eframe::Result {
-    let options = match Options::parse(std::env::args(), HELP) {
+    let options = match Options::parse(std::env::args(), HELP, VERSION) {
         Ok(Some(options)) => options,
-        // The help was printed; there is nothing to run.
+        // The help or the version was printed; there is nothing to run.
         Ok(None) => return Ok(()),
         Err(message) => {
             eprintln!("sleepy-ui: {message}");
@@ -67,6 +67,11 @@ options:
       --keep-screen-on  hold off screen blanking while the countdown runs
                         (also a checkbox)
   -h, --help            print this help
+  -V, --version         print sleepy-ui's name and version
 
 the countdown keeps running while the window is hidden; a minimised
 sleepy still puts the machine to sleep on time.";
+
+/// What `-V` prints: the crate's own name and version, kept true by
+/// the build rather than by memory.
+const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"));

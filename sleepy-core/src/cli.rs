@@ -27,9 +27,14 @@ pub struct Options {
 }
 
 impl Options {
-    /// Parses the command line; `Ok(None)` means the help was printed.
-    pub fn parse(args: impl Iterator<Item = String>, help: &str) -> Result<Option<Self>, String> {
-        Self::parse_with(args, help, crate::detect)
+    /// Parses the command line; `Ok(None)` means the help or the version
+    /// was printed.
+    pub fn parse(
+        args: impl Iterator<Item = String>,
+        help: &str,
+        version: &str,
+    ) -> Result<Option<Self>, String> {
+        Self::parse_with(args, help, version, crate::detect)
     }
 
     /// A hand-written parser, with `detect` a parameter so the tests never
@@ -37,6 +42,7 @@ impl Options {
     pub fn parse_with(
         args: impl Iterator<Item = String>,
         help: &str,
+        version: &str,
         detected: impl FnOnce() -> Vec<SleepAction>,
     ) -> Result<Option<Self>, String> {
         let mut backend = Backend::Real;
@@ -48,6 +54,10 @@ impl Options {
             match arg.as_str() {
                 "-h" | "--help" => {
                     println!("{help}");
+                    return Ok(None);
+                }
+                "-V" | "--version" => {
+                    println!("{version}");
                     return Ok(None);
                 }
                 "--dry-run" => backend = Backend::DryRun,
@@ -100,9 +110,24 @@ mod tests {
 
     /// A machine that offers suspend and nothing else.
     fn parse(args: &[&str]) -> Result<Option<Options>, String> {
-        Options::parse_with(args.iter().map(|arg| arg.to_string()), "help", || {
-            vec![SleepAction::Suspend]
-        })
+        Options::parse_with(
+            args.iter().map(|arg| arg.to_string()),
+            "help",
+            "version",
+            || vec![SleepAction::Suspend],
+        )
+    }
+
+    #[test]
+    fn help_and_version_are_printed_instead_of_run() {
+        // `Ok(None)`: the message went out, and no screen is taken.
+        assert!(parse(&["sleepy", "--help"]).unwrap().is_none());
+        assert!(parse(&["sleepy", "-h"]).unwrap().is_none());
+        assert!(parse(&["sleepy", "--version"]).unwrap().is_none());
+        assert!(parse(&["sleepy", "-V"]).unwrap().is_none());
+        // Asked early, they answer before anything is checked: a bad
+        // duration does not stop the version from printing.
+        assert!(parse(&["sleepy", "-V", "soon"]).unwrap().is_none());
     }
 
     #[test]

@@ -21,9 +21,9 @@ use std::{io::stdout, time::Duration};
 const TICK: Duration = Duration::from_millis(250);
 
 fn main() -> std::process::ExitCode {
-    let options = match Options::parse(std::env::args(), HELP) {
+    let options = match Options::parse(std::env::args(), HELP, VERSION) {
         Ok(Some(options)) => options,
-        // The help was printed; there is nothing to run.
+        // The help or the version was printed; there is nothing to run.
         Ok(None) => return std::process::ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("sleepy: {message}");
@@ -57,10 +57,15 @@ options:
       --keep-screen-on  hold off screen blanking while the countdown runs
                         (k toggles it)
   -h, --help            print this help
+  -V, --version         print sleepy's name and version
 
 keys: ctrl+d dry run, k keep awake, enter arms, space pauses, esc aborts,
       +/- a minute, q quits
       d is always a letter (2d, 30 min); space types while the timer is idle";
+
+/// What `-V` prints: the crate's own name and version, kept true by
+/// the build rather than by memory.
+const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"));
 
 fn run(options: Options) -> Result<()> {
     // The guard owns the terminal's mood; dropping it gives the shell back.
