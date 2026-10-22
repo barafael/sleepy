@@ -12,7 +12,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
       # No apt packages, on purpose: sleepy-ui builds against winit and
       # glow, which load the display server's libraries at runtime rather
@@ -26,7 +26,7 @@ jobs:
   msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
       - run: rustup toolchain install 1.95 --profile minimal
       - run: cargo +1.95 check --workspace --all-targets
