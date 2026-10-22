@@ -98,6 +98,10 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ```
 
+The MSRV is 1.95, which is what eframe asks for; the workspace says so
+(`rust-version`) and the lints there say the house rules: no unsafe, no
+unwraps outside tests.
+
 The timer is handed its clock (`tick(now)`), so the whole state machine -
 arm, pause, nudge, fire - is tested without waiting for anything. The
 terminal app is exercised through a real pty in a scratch harness, the

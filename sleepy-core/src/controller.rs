@@ -161,11 +161,18 @@ impl Controller {
     /// last draw saying so, if it can.
     pub fn tick(&mut self, now: Instant) -> bool {
         if self.timer.tick(now) == TimerEvent::Fired {
-            self.fired = Some(
-                self.timer
-                    .action()
-                    .expect("a fired countdown knows what it is doing"),
-            );
+            // A fired countdown was armed with an action; if that ever
+            // stops being true it is a bug in the timer's state machine,
+            // and a loud one beats a countdown that quietly sleeps
+            // through its own alarm.
+            #[allow(clippy::expect_used)]
+            {
+                self.fired = Some(
+                    self.timer
+                        .action()
+                        .expect("a fired countdown knows what it is doing"),
+                );
+            }
             return true;
         }
         false

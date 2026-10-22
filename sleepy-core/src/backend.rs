@@ -141,6 +141,8 @@ impl PartialEq for Error {
 }
 
 #[cfg(test)]
+// A test that cannot get its answer is broken, not a machine that said no.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use strum::IntoEnumIterator;

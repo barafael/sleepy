@@ -5,6 +5,7 @@ members = ["sleepy", "sleepy-core", "sleepy-ui"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/barafael/sleepy"
 
@@ -30,3 +31,16 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# The house rules, once for every crate: no unsafe, and no unwraps
+# outside the tests - sleepy talks to a machine that can always say no,
+# and that answer deserves a plan, not a panic.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
