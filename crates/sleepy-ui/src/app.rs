@@ -13,6 +13,9 @@ use sleepy_core::{
 };
 use std::time::{Duration, Instant};
 
+/// Storage key of the theme setting.
+const THEME_KEY: &str = "theme";
+
 /// The duration offered to a user who types nothing.
 const DEFAULT: &str = "30 min";
 
@@ -39,17 +42,37 @@ pub struct SleepyApp {
     pub fired: Option<SleepAction>,
     /// Why the machine is still awake after a fired countdown, if it is.
     pub failure: Option<Error>,
+    /// For saving settings, which happens outside a frame.
+    ctx: egui::Context,
+    /// Which look the user asked for.
+    theme: egui::ThemePreference,
+    /// The desktop's light/dark preference.
+    #[cfg(target_os = "linux")]
+    system_theme: crate::portal::SystemTheme,
+    /// Saves the window's size and position.
+    window: Option<crate::geometry::Tracker>,
 }
 
 impl SleepyApp {
     /// Starts from the command line's choices, exactly as the terminal
     /// does: a named duration arms at once, a named mode highlights.
-    pub fn new(backend: Backend, duration: Option<String>, mode: Option<SleepAction>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        backend: Backend,
+        duration: Option<String>,
+        mode: Option<SleepAction>,
+    ) -> Self {
         let modes = detect();
         let selected = mode
             .and_then(|want| modes.iter().position(|have| *have == want))
             .unwrap_or(0);
         let arm = duration.is_some();
+        let theme = cc
+            .storage
+            .and_then(|storage| storage.get_string(THEME_KEY))
+            .map(|stored| theme_from_stored(&stored))
+            .unwrap_or_default();
+        cc.egui_ctx.set_theme(theme);
         let mut app = Self {
             modes,
             selected,
@@ -58,11 +81,22 @@ impl SleepyApp {
             backend,
             fired: None,
             failure: None,
+            ctx: cc.egui_ctx.clone(),
+            theme,
+            #[cfg(target_os = "linux")]
+            system_theme: crate::portal::SystemTheme::watch(cc.egui_ctx.clone()),
+            window: None,
         };
         if arm {
             app.arm_selected();
         }
         app
+    }
+
+    /// Remembers the window's geometry between runs.
+    pub fn with_window(mut self, tracker: crate::geometry::Tracker) -> Self {
+        self.window = Some(tracker);
+        self
     }
 
     /// The highlighted mode, if the machine offered any.
@@ -100,6 +134,22 @@ impl SleepyApp {
 }
 
 impl eframe::App for SleepyApp {
+    /// Remembers the theme and the window's geometry.
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(THEME_KEY, theme_to_stored(self.theme));
+        if let Some(window) = &self.window {
+            window.save(&self.ctx);
+        }
+    }
+
+    /// Supplies the system theme where winit does not know it.
+    #[cfg(target_os = "linux")]
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if raw_input.system_theme.is_none() {
+            raw_input.system_theme = self.system_theme.get();
+        }
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // egui only calls back when asked; a countdown must ask for its
         // own heartbeat. `logic` runs even while the window is hidden, so
@@ -118,6 +168,9 @@ impl eframe::App for SleepyApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if let Some(window) = &mut self.window {
+            window.observe(ui.ctx());
+        }
         // The root ui has no margin or background; a panel supplies both.
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -127,6 +180,9 @@ impl eframe::App for SleepyApp {
                     // and do nothing else.
                     ui.colored_label(egui::Color32::ORANGE, "dry run");
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    draw_theme(ui, self);
+                });
             });
             ui.add_space(8.0);
             draw_modes(ui, self);
@@ -137,6 +193,26 @@ impl eframe::App for SleepyApp {
             ui.add_space(12.0);
             draw_countdown(ui, self);
         });
+    }
+}
+
+/// The look picker. "system" is what the desktop says, which on Linux is
+/// what the portal watcher hears; egui repaints the moment it changes.
+fn draw_theme(ui: &mut egui::Ui, app: &mut SleepyApp) {
+    let before = app.theme;
+    egui::ComboBox::from_id_salt("theme")
+        .selected_text(theme_to_stored(app.theme))
+        .show_ui(ui, |ui| {
+            for theme in [
+                egui::ThemePreference::System,
+                egui::ThemePreference::Light,
+                egui::ThemePreference::Dark,
+            ] {
+                ui.selectable_value(&mut app.theme, theme, theme_to_stored(theme));
+            }
+        });
+    if app.theme != before {
+        ui.ctx().set_theme(app.theme);
     }
 }
 
@@ -263,5 +339,25 @@ fn draw_countdown(ui: &mut egui::Ui, app: &mut SleepyApp) {
                 ui.colored_label(egui::Color32::DARK_RED, error.to_string());
             }
         }
+    }
+}
+
+/// The theme as stored in the settings.
+fn theme_to_stored(theme: egui::ThemePreference) -> String {
+    let name = match theme {
+        egui::ThemePreference::System => "system",
+        egui::ThemePreference::Light => "light",
+        egui::ThemePreference::Dark => "dark",
+    };
+    name.to_owned()
+}
+
+/// The stored theme; anything unrecognised is the default, so a future
+/// name cannot lock the window into a look nobody chose.
+fn theme_from_stored(text: &str) -> egui::ThemePreference {
+    match text {
+        "light" => egui::ThemePreference::Light,
+        "dark" => egui::ThemePreference::Dark,
+        _ => egui::ThemePreference::System,
     }
 }

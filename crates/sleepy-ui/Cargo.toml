@@ -14,3 +14,7 @@ sleepy-core = { workspace = true }
 eframe = { workspace = true, features = ["x11", "wayland"] }
 egui = { workspace = true }
 humantime = { workspace = true }
+
+# Desktop theme preference (winit reports none on Linux).
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { workspace = true }

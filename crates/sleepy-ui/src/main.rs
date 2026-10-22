@@ -6,6 +6,9 @@
 //! stays sleepy-core's, where it is tested without a display server.
 
 mod app;
+mod geometry;
+#[cfg(target_os = "linux")]
+mod portal;
 
 use app::SleepyApp;
 use sleepy_core::{Backend, SleepAction, detect, parse_duration};
@@ -20,27 +23,30 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     };
+    let saved = geometry::Geometry::load();
     let viewport = egui::ViewportBuilder::default()
         .with_title("sleepy")
         .with_app_id("sleepy-ui")
         .with_inner_size([420.0, 380.0])
         .with_min_inner_size([340.0, 300.0]);
     let native_options = eframe::NativeOptions {
-        viewport,
-        // Until sleepy keeps its own geometry, eframe's persistence is
-        // enough to remember the window between runs.
-        persist_window: true,
+        viewport: match saved {
+            Some(geometry) => geometry.apply(viewport),
+            None => viewport,
+        },
+        // sleepy restores the window itself; see `geometry`.
+        persist_window: false,
         ..Default::default()
     };
+    let tracker = geometry::Tracker::new(saved.and_then(|g| g.position));
     eframe::run_native(
         "sleepy-ui",
         native_options,
-        Box::new(move |_cc| {
-            Ok(Box::new(SleepyApp::new(
-                options.backend,
-                options.duration,
-                options.mode,
-            )))
+        Box::new(move |cc| {
+            Ok(Box::new(
+                SleepyApp::new(cc, options.backend, options.duration, options.mode)
+                    .with_window(tracker),
+            ))
         }),
     )
 }
