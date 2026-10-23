@@ -1,10 +1,12 @@
 # sleepy's web build: trunk assembles sleepy-ui for the browser onto
-# index.html and leaves the page in /docs, where GitHub Pages serves it.
-# The names carry no file hash, so what the build leaves is what the
-# commit holds and the page can be read without a diff of names.
+# index.html and leaves the page in target/, which git already ignores;
+# CI builds the same way and hands the result to GitHub Pages, so the
+# demo is never a committed artifact a local build could dirty.
+# The names carry no file hash, so the page can be read without a diff
+# of names.
 [build]
 target = "index.html"
-dist = "../docs"
+dist = "../target/trunk"
 filehash = false
 # GitHub Pages serves a project site under /<repo>/, so the page must
 # reach its files relatively rather than from the domain's root.

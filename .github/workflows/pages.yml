@@ -1,0 +1,56 @@
+name: Pages
+
+# The demo is the app, compiled for the browser and rebuilt on every
+# push: trunk assembles the window here and hands the result to Pages,
+# so the artifacts never need to be committed and the live demo can
+# never drift from the source.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; the newest push wins, and an in-flight
+# deployment is never cancelled halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup target add wasm32-unknown-unknown
+      # trunk ships prebuilt binaries, and downloading the pinned one
+      # beats compiling it from source. Its companions (wasm-bindgen and
+      # wasm-opt) are fetched on first use, matching the versions the
+      # lockfile and index.html ask for.
+      - name: Install trunk
+        run: |
+          curl -sL https://github.com/trunk-rs/trunk/releases/download/v0.22.0/trunk-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz -C "$HOME/.cargo/bin"
+          trunk --version
+      - name: Build
+        working-directory: sleepy-ui
+        run: trunk build --release
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/trunk
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
