@@ -13,7 +13,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>sleepy</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💤</text></svg>" />
-  <link data-trunk rel="rust" data-wasm-opt="0" />
+  <!-- wasm-opt trims and speeds the wasm. The enable flags name the
+       features rustc has worn by default since 1.87; the wasm itself
+       keeps quiet about them, so wasm-opt must be told what it may
+       expect to find. -->
+  <link
+    data-trunk
+    rel="rust"
+    data-wasm-opt="2"
+    data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-reference-types --enable-multivalue"
+  />
   <!-- GitHub Pages runs Jekyll unless told not to, and Jekyll knows no
      way to be careful with a wasm binary. -->
   <link data-trunk rel="copy-file" href=".nojekyll" />
@@ -27,11 +36,15 @@
       font: 15px/1.5 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
     }
     #loading { text-align: center; padding: 10px; }
-    /* eframe follows the canvas's size on the page: a window's width,
-       the page's height, centred. */
+    /* eframe follows the canvas's size on the page, so the window
+       wears the whole of it. `dvh` keeps a mobile browser's URL bars
+       out of the height's way; `vh` is the answer for browsers too
+       old to know the word. */
     canvas {
-      display: block; margin: 0 auto;
-      width: min(100%, 640px); height: 100vh;
+      display: block;
+      width: 100%;
+      height: 100vh;
+      height: 100dvh;
     }
   </style>
 </head>

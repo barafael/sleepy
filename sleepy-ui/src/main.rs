@@ -70,6 +70,7 @@ fn main() -> eframe::Result {
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
     console_error_panic_hook::set_once();
+    keep_ctrl_d();
     // The browser grants notifications once per site and remembers; ask
     // at the moment the page is freshest, where whoever came to be told
     // "time" in thirty minutes means to be told. Browsers that wait for
@@ -119,6 +120,36 @@ fn report(document: &Option<web_sys::Document>, message: &str) {
         .and_then(|document| document.get_element_by_id("loading"))
     {
         loading.set_text_content(Some(&format!("sleepy could not start: {message}")));
+    }
+}
+
+/// Ctrl+D is sleepy's dry-run toggle and the browser's bookmark chord;
+/// while the page has the keys, the page answers it. eframe leaves
+/// this chord to the browser, so the page keeps its own counsel: the
+/// bookmark dialog would open over a countdown the user was only
+/// trying to mark dry.
+#[cfg(target_arch = "wasm32")]
+fn keep_ctrl_d() {
+    use eframe::wasm_bindgen::JsCast as _;
+    use eframe::wasm_bindgen::closure::Closure;
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let keep = Closure::wrap(Box::new(|event: web_sys::KeyboardEvent| {
+        if event.ctrl_key()
+            && !(event.shift_key() || event.alt_key() || event.meta_key())
+            && event.key().eq_ignore_ascii_case("d")
+        {
+            event.prevent_default();
+        }
+    }) as Box<dyn Fn(web_sys::KeyboardEvent)>);
+    if window
+        .add_event_listener_with_callback("keydown", keep.as_ref().unchecked_ref())
+        .is_ok()
+    {
+        // The watcher lives as long as the page, which is as long as
+        // the chord needs an answer.
+        keep.forget();
     }
 }
 

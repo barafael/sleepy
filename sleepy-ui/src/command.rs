@@ -78,9 +78,12 @@ pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
         // the terminal: `q` quits, `+` and `-` nudge the deadline.
         press(none, egui::Key::Q, Command::Quit);
         // The numpad's + and - arrive as Plus and Minus: egui folds
-        // the keypad variants into the same logical keys.
+        // the keypad variants into the same logical keys. And the
+        // main row's + is a shifted equals - the same nudge, worn
+        // with the shift it takes to type it.
         press(none, egui::Key::Plus, Command::Longer);
         press(none, egui::Key::Equals, Command::Longer);
+        press(egui::Modifiers::SHIFT, egui::Key::Equals, Command::Longer);
         press(none, egui::Key::Minus, Command::Shorter);
         // Space is humantime's separator, so while the field is being
         // edited it types; once the field is done with it, it pauses.
@@ -147,6 +150,11 @@ mod tests {
         assert_eq!(
             take(&pressed_with(egui::Key::D, Modifiers::CTRL), false),
             vec![Command::ToggleDryRun]
+        );
+        // The main row's + is a shifted equals, and nudges the same.
+        assert_eq!(
+            take(&pressed_with(egui::Key::Equals, Modifiers::SHIFT), false),
+            vec![Command::Longer]
         );
     }
 

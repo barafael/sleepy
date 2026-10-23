@@ -10,7 +10,11 @@
 use crate::app::SleepyApp;
 use crate::command;
 use crate::theme;
-use egui::{Align, Color32, CursorIcon, Label, Layout, Response, RichText, Sense, TextStyle, Ui};
+use egui::text::CCursorRange;
+use egui::widgets::text_edit::TextEditState;
+use egui::{
+    Align, Color32, CursorIcon, ImeEvent, Label, Layout, Response, RichText, Sense, TextStyle, Ui,
+};
 use humantime::format_duration;
 use sleepy_core::{Backend, Command, Status, When, describe, format_clock, is_when_prefix};
 use std::time::Duration;
@@ -194,9 +198,15 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
     let p = theme::of(ui);
     // The field holds only what a when could still become: an edit
     // that completes no when - a stray letter, a bad paste - is
-    // undone before it can mean anything. (`k` never gets this far:
-    // the window takes it as the keep-awake toggle.)
+    // refused at the gate, before the widget can take it in. Undoing
+    // such an edit afterwards would let it flash for a frame, leave
+    // the cursor a step right of where the user left it, and - on
+    // the web, where a hidden input mirrors the field for the
+    // browser's keyboard - fall out of step with that mirror.
     let before = app.controller.input.clone();
+    let cursor =
+        TextEditState::load(ui.ctx(), field_id()).and_then(|state| state.cursor.char_range());
+    refuse_edits_no_when_can_wear(ui, &before, cursor);
     let field = egui::TextEdit::singleline(&mut app.controller.input)
         .id(field_id())
         .hint_text("45s, 30 min, 1h30m, 23:45")
@@ -204,7 +214,16 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
         .desired_width(f32::INFINITY);
     let response = ui.add(field);
     if !is_when_prefix(&app.controller.input) {
+        // What the gate could not see coming - a word deleted from
+        // the middle, an IME's provisional text - is undone here,
+        // and the cursor with it: the widget must not remember an
+        // edit that never happened. (`k` never gets this far: the
+        // window takes it as the keep-awake toggle.)
         app.controller.input = before;
+        if let Some(mut state) = TextEditState::load(ui.ctx(), field_id()) {
+            state.cursor.set_char_range(cursor);
+            state.store(ui.ctx(), field_id());
+        }
     }
     // Like the terminal, where the keystrokes go to the field from the
     // first frame; after that the user's focus is their own.
@@ -225,6 +244,57 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
             ui.label(RichText::new(error.to_string()).color(p.red));
         }
     }
+}
+
+/// Drops the edits no when could wear before the field sees them.
+///
+/// The gate replays egui's own edit - the selection replaced, a
+/// paste's newlines turned to spaces, one event building on the
+/// last - so what passes the gate is exactly what would have
+/// landed. Deletions pass: what the field holds, the user can
+/// always take away, and an edit that deletes too much is caught
+/// by [`draw_when`]'s undo, cursor and all.
+fn refuse_edits_no_when_can_wear(ui: &Ui, buffer: &str, cursor: Option<CCursorRange>) {
+    let mut text = buffer.to_owned();
+    let mut point = cursor.map_or_else(
+        || text.chars().count(),
+        |range| range.primary.index.0.min(text.chars().count()),
+    );
+    let mut other = cursor.map_or(point, |range| {
+        range.secondary.index.0.min(text.chars().count())
+    });
+    ui.ctx().input_mut(|i| {
+        i.events.retain(|event| {
+            let incoming = match event {
+                // A single line turns a paste's newlines to spaces;
+                // a lone newline in text is the Enter key's doing,
+                // and the widget swallows it.
+                egui::Event::Paste(t) => Some(t.replace(['\r', '\n'], " ")),
+                egui::Event::Text(t) if t != "\n" && t != "\r" => Some(t.clone()),
+                egui::Event::Ime(ImeEvent::Commit(t)) => Some(t.clone()),
+                _ => None,
+            };
+            let Some(incoming) = incoming else {
+                return true;
+            };
+            let (lo, hi) = (point.min(other), point.max(other));
+            let chars: Vec<char> = text.chars().collect();
+            let candidate: String = chars[..lo]
+                .iter()
+                .copied()
+                .chain(incoming.chars())
+                .chain(chars[hi..].iter().copied())
+                .collect();
+            if is_when_prefix(&candidate) {
+                text = candidate;
+                point = lo + incoming.chars().count();
+                other = point;
+                true
+            } else {
+                false
+            }
+        });
+    });
 }
 
 /// A `[x]` toggle: monospace, accent when on, the info-bar style of the

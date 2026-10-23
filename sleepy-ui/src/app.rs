@@ -65,6 +65,13 @@ impl SleepyApp {
     /// gets.
     fn run(&mut self, command: Command) {
         self.pressed = Some((command, self.ctx.input(|i| i.time)));
+        // A tab cannot close itself: on the web, asking to leave means
+        // giving up the countdown, and the page stays idle and armable.
+        #[cfg(target_arch = "wasm32")]
+        if command == Command::Quit {
+            self.controller.abort();
+            return;
+        }
         self.controller.apply(command);
     }
 }
@@ -92,11 +99,21 @@ impl eframe::App for SleepyApp {
         // egui only calls back when asked; a countdown must ask for its
         // own heartbeat. `logic` runs even while the window is hidden, so
         // a minimised sleepy still puts the machine to sleep on time.
-        if matches!(
-            self.controller.timer.status(),
-            Status::Armed | Status::Paused
-        ) {
-            ctx.request_repaint_after(TICK);
+        match self.controller.timer.status() {
+            // On the web the bar falls smoothly: a visible page takes
+            // every animation frame the display offers, and a hidden
+            // one the browser throttles to about a look a second by
+            // itself - smooth where it is seen, cheap where it is not.
+            #[cfg(target_arch = "wasm32")]
+            Status::Armed => ctx.request_repaint(),
+            // The desktop needs four looks a second for a countdown
+            // showing whole seconds, no more.
+            #[cfg(not(target_arch = "wasm32"))]
+            Status::Armed => ctx.request_repaint_after(TICK),
+            // Paused shows nothing that moves; the heartbeat only
+            // keeps the clock turning until the countdown resumes.
+            Status::Paused => ctx.request_repaint_after(TICK),
+            Status::Idle | Status::Fired => {}
         }
         if self.controller.tick(Instant::now()) {
             self.controller.perform();

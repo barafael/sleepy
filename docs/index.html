@@ -13,6 +13,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>sleepy</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💤</text></svg>" />
+  <!-- wasm-opt trims and speeds the wasm. The enable flags name the
+       features rustc has worn by default since 1.87; the wasm itself
+       keeps quiet about them, so wasm-opt must be told what it may
+       expect to find. -->
   
 <script type="module">
 import init, * as bindings from './sleepy-ui.js';
@@ -38,14 +42,18 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
       font: 15px/1.5 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
     }
     #loading { text-align: center; padding: 10px; }
-    /* eframe follows the canvas's size on the page: a window's width,
-       the page's height, centred. */
+    /* eframe follows the canvas's size on the page, so the window
+       wears the whole of it. `dvh` keeps a mobile browser's URL bars
+       out of the height's way; `vh` is the answer for browsers too
+       old to know the word. */
     canvas {
-      display: block; margin: 0 auto;
-      width: min(100%, 640px); height: 100vh;
+      display: block;
+      width: 100%;
+      height: 100vh;
+      height: 100dvh;
     }
   </style>
-<link rel="modulepreload" href="./sleepy-ui.js" crossorigin="anonymous" integrity="sha384-EgiyC1xZMxMZouvYgCT3uyNAayZFx+aIzhmyYHm0jChUKlqumQ3ThZxzDwkmWOWX"><link rel="preload" href="./sleepy-ui_bg.wasm" crossorigin="anonymous" integrity="sha384-aYgZ85SYGzfzIt8lKZDcDo91xKTbIhloQcXRuQOqR9BsKWDqDCjGUaaImIg+euxY" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./sleepy-ui.js" crossorigin="anonymous" integrity="sha384-fJUWb9s4KgYCaSRtg8jg6tNoH6wg2S0QJ7y+vZxFIVxvgRdzX1YUDt5TbKv+nhEo"><link rel="preload" href="./sleepy-ui_bg.wasm" crossorigin="anonymous" integrity="sha384-RcIlRq3zkF/+bPJdzBK7c5FfQLMcOtWneYmvUQferHj8gHKf0c6bm3w/+99zrarP" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">waking sleepy…</div>
   <canvas id="sleepy"></canvas>
