@@ -166,7 +166,7 @@ pub fn detect() -> Vec<SleepAction> {
 /// The script the [`SleepAction::RunScript`] countdown runs, when the
 /// user left one in the working directory: `action.sh`, or `action.ps1`
 /// on Windows, where the shell to honour is PowerShell's.
-pub fn script_path() -> Option<PathBuf> {
+pub(crate) fn script_path() -> Option<PathBuf> {
     script_in(Path::new("."))
 }
 

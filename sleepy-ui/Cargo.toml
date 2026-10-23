@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 sleepy-core = { workspace = true }
 egui = { workspace = true }
-humantime = { workspace = true }
 web-time = { workspace = true }
 
 # x11 and wayland are how a window appears on Linux; the web build has
@@ -41,10 +40,3 @@ web-sys = { workspace = true, features = [
 # dependency exists only where there is an .exe to write it into.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
-
-# Desktop theme preference (winit reports none on Linux).
-[target.'cfg(target_os = "linux")'.dependencies]
-zbus = { workspace = true }
-# zbus hands out its signals as futures-core streams; this is the trait
-# that pulls their items.
-futures-util = { workspace = true }

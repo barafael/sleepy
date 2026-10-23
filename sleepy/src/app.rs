@@ -6,14 +6,13 @@
 //! editing that goes with it.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use sleepy_core::{Command, Controller, Options, Status, is_when_prefix};
+use sleepy_core::{Command, Controller, Options, Status};
 use std::time::Instant;
 
 /// Which key means which command, in the terminal. What is not here is
-/// the field's own: while it is being edited (idle), the plain
-/// characters a when could still wear - `d`, space, everything
-/// humantime reads - type into it, and the rest are refused at the
-/// door. The window transliterates its own keys to the same commands;
+/// the field's own: while it is being edited (idle), everything that is
+/// no command types into it, and humantime's answer to what landed shows
+/// below. The window transliterates its own keys to the same commands;
 /// what a command does is core's, shared, so neither frontend can
 /// drift.
 fn command(key: KeyEvent, idle: bool) -> Option<Command> {
@@ -26,9 +25,8 @@ fn command(key: KeyEvent, idle: bool) -> Option<Command> {
         // aborting the timer - so it rides on a chord no text field
         // has a use for, leaving plain `d` to type: `2d` needs it.
         KeyCode::Char('d') if ctrl => Some(Command::ToggleDryRun),
-        // `k` keeps the screen awake; it is a command at any moment,
-        // for the field only takes what a when could still become,
-        // and `k` never begins one.
+        // `k` keeps the screen awake; it is sleepy's key at any moment,
+        // here and in the window, and the field never sees it.
         KeyCode::Char('k') if !ctrl => Some(Command::ToggleKeepAwake),
         KeyCode::Esc if !ctrl => Some(Command::Escape),
         KeyCode::Up | KeyCode::BackTab if !ctrl => Some(Command::PreviousMode),
@@ -79,17 +77,10 @@ impl App {
                     self.controller.input.pop();
                 }
                 KeyCode::Char('u') if ctrl => self.controller.input.clear(),
-                // The field holds only what a when could still become:
-                // a character that completes no when is refused at the
-                // door, so the error hint below the field stays a
-                // correction rather than a surprise.
-                KeyCode::Char(c) if !ctrl => {
-                    let mut typed = self.controller.input.clone();
-                    typed.push(c);
-                    if is_when_prefix(&typed) {
-                        self.controller.input.push(c);
-                    }
-                }
+                // The field takes whatever is no command: humantime is
+                // the one that judges what landed, and its answer - the
+                // promise or the correction - shows below the field.
+                KeyCode::Char(c) if !ctrl => self.controller.input.push(c),
                 _ => {}
             },
             None => {}
@@ -203,23 +194,26 @@ mod tests {
     }
 
     #[test]
-    fn the_field_refuses_what_no_when_could_wear() {
+    fn the_field_types_everything_and_humantime_judges_it() {
         let mut app = app();
         app.controller.input.clear();
-        type_text(&mut app, "23:4");
-        assert_eq!(app.controller.input, "23:4");
-        // A letter the clock does not wear is refused at the door: no
-        // error to read, just a key that does nothing.
-        type_text(&mut app, "x");
-        assert_eq!(app.controller.input, "23:4");
-        // An hour the day does not have never enters either.
+        // Nothing is refused at the door: a letter the clock does not
+        // wear lands in the field all the same.
+        type_text(&mut app, "23:4x");
+        assert_eq!(app.controller.input, "23:4x");
+        // What says no is the parser, and it says so below the field.
+        assert!(app.controller.when().is_err());
+        // An hour the day does not have enters too, and is answered
+        // with its own correction.
         app.controller.input.clear();
         type_text(&mut app, "25:");
-        assert_eq!(app.controller.input, "25");
-        // But a prefix of a real when is never refused.
+        assert_eq!(app.controller.input, "25:");
+        assert!(app.controller.when().is_err());
+        // And a real when still wears its echo.
         app.controller.input.clear();
         type_text(&mut app, "1h30m");
         assert_eq!(app.controller.input, "1h30m");
+        assert!(app.controller.when().is_ok());
     }
 
     #[test]

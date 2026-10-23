@@ -10,14 +10,8 @@
 use crate::app::SleepyApp;
 use crate::command;
 use crate::theme;
-use egui::text::CCursorRange;
-use egui::widgets::text_edit::TextEditState;
-use egui::{
-    Align, Color32, CursorIcon, ImeEvent, Label, Layout, Response, RichText, Sense, TextStyle, Ui,
-};
-use humantime::format_duration;
-use sleepy_core::{Backend, Command, Status, When, describe, format_clock, is_when_prefix};
-use std::time::Duration;
+use egui::{Align, Color32, CursorIcon, Label, Layout, Response, RichText, Sense, TextStyle, Ui};
+use sleepy_core::{Backend, Command, Status, describe};
 
 /// Horizontal gap between unrelated items.
 const GAP: f32 = 10.0;
@@ -55,7 +49,7 @@ pub fn render(app: &mut SleepyApp, ui: &mut Ui) -> Option<Command> {
 /// A full-width bar titling a block; filled with the accent when the
 /// keyboard is busy with that block.
 fn section_bar(ui: &mut Ui, title: &str, right: &str, focused: bool) {
-    let p = theme::of(ui);
+    let p = &theme::PALETTE;
     let height = ui.text_style_height(&TextStyle::Heading) + 8.0;
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
@@ -83,7 +77,7 @@ fn section_bar(ui: &mut Ui, title: &str, right: &str, focused: bool) {
 }
 
 fn render_header(app: &SleepyApp, ui: &mut Ui) {
-    let p = theme::of(ui);
+    let p = &theme::PALETTE;
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(GAP as i8, 6))
         .show(ui, |ui| {
@@ -147,7 +141,7 @@ fn render_body(app: &mut SleepyApp, ui: &mut Ui, typing: bool) {
 }
 
 fn draw_modes(app: &mut SleepyApp, ui: &mut Ui) {
-    let p = theme::of(ui);
+    let p = &theme::PALETTE;
     if app.controller.modes.is_empty() {
         ui.label(
             RichText::new("this machine offers nothing to arm")
@@ -195,36 +189,16 @@ fn draw_modes(app: &mut SleepyApp, ui: &mut Ui) {
 }
 
 fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
-    let p = theme::of(ui);
-    // The field holds only what a when could still become: an edit
-    // that completes no when - a stray letter, a bad paste - is
-    // refused at the gate, before the widget can take it in. Undoing
-    // such an edit afterwards would let it flash for a frame, leave
-    // the cursor a step right of where the user left it, and - on
-    // the web, where a hidden input mirrors the field for the
-    // browser's keyboard - fall out of step with that mirror.
-    let before = app.controller.input.clone();
-    let cursor =
-        TextEditState::load(ui.ctx(), field_id()).and_then(|state| state.cursor.char_range());
-    refuse_edits_no_when_can_wear(ui, &before, cursor);
+    let p = &theme::PALETTE;
+    // The field types whatever it is given; humantime is the one that
+    // judges it, and the judgement - the promise or the correction -
+    // is shown below the field, where it can be read rather than felt.
     let field = egui::TextEdit::singleline(&mut app.controller.input)
         .id(field_id())
         .hint_text("45s, 30 min, 1h30m, 23:45")
         .font(TextStyle::Monospace)
         .desired_width(f32::INFINITY);
     let response = ui.add(field);
-    if !is_when_prefix(&app.controller.input) {
-        // What the gate could not see coming - a word deleted from
-        // the middle, an IME's provisional text - is undone here,
-        // and the cursor with it: the widget must not remember an
-        // edit that never happened. (`k` never gets this far: the
-        // window takes it as the keep-awake toggle.)
-        app.controller.input = before;
-        if let Some(mut state) = TextEditState::load(ui.ctx(), field_id()) {
-            state.cursor.set_char_range(cursor);
-            state.store(ui.ctx(), field_id());
-        }
-    }
     // Like the terminal, where the keystrokes go to the field from the
     // first frame; after that the user's focus is their own.
     if app.focus_field {
@@ -232,13 +206,9 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
         app.focus_field = false;
     }
     match app.controller.when() {
-        // The field echoes its own meaning in the grammar it was typed
-        // in, as it does in the terminal.
-        Ok(When::After(duration)) => {
-            ui.label(RichText::new(format!("-> in {}", format_duration(duration))).color(p.weak));
-        }
-        Ok(When::At(time)) => {
-            ui.label(RichText::new(format!("-> at {}", time.strftime("%H:%M"))).color(p.weak));
+        // The field echoes its own meaning, in the words both frontends share.
+        Ok(when) => {
+            ui.label(RichText::new(when.echo()).color(p.weak));
         }
         Err(error) => {
             ui.label(RichText::new(error.to_string()).color(p.red));
@@ -246,61 +216,10 @@ fn draw_when(app: &mut SleepyApp, ui: &mut Ui) {
     }
 }
 
-/// Drops the edits no when could wear before the field sees them.
-///
-/// The gate replays egui's own edit - the selection replaced, a
-/// paste's newlines turned to spaces, one event building on the
-/// last - so what passes the gate is exactly what would have
-/// landed. Deletions pass: what the field holds, the user can
-/// always take away, and an edit that deletes too much is caught
-/// by [`draw_when`]'s undo, cursor and all.
-fn refuse_edits_no_when_can_wear(ui: &Ui, buffer: &str, cursor: Option<CCursorRange>) {
-    let mut text = buffer.to_owned();
-    let mut point = cursor.map_or_else(
-        || text.chars().count(),
-        |range| range.primary.index.0.min(text.chars().count()),
-    );
-    let mut other = cursor.map_or(point, |range| {
-        range.secondary.index.0.min(text.chars().count())
-    });
-    ui.ctx().input_mut(|i| {
-        i.events.retain(|event| {
-            let incoming = match event {
-                // A single line turns a paste's newlines to spaces;
-                // a lone newline in text is the Enter key's doing,
-                // and the widget swallows it.
-                egui::Event::Paste(t) => Some(t.replace(['\r', '\n'], " ")),
-                egui::Event::Text(t) if t != "\n" && t != "\r" => Some(t.clone()),
-                egui::Event::Ime(ImeEvent::Commit(t)) => Some(t.clone()),
-                _ => None,
-            };
-            let Some(incoming) = incoming else {
-                return true;
-            };
-            let (lo, hi) = (point.min(other), point.max(other));
-            let chars: Vec<char> = text.chars().collect();
-            let candidate: String = chars[..lo]
-                .iter()
-                .copied()
-                .chain(incoming.chars())
-                .chain(chars[hi..].iter().copied())
-                .collect();
-            if is_when_prefix(&candidate) {
-                text = candidate;
-                point = lo + incoming.chars().count();
-                other = point;
-                true
-            } else {
-                false
-            }
-        });
-    });
-}
-
 /// A `[x]` toggle: monospace, accent when on, the info-bar style of the
 /// reference windows.
 fn toggle(ui: &mut Ui, name: &str, on: bool, tip: &str) -> Response {
-    let p = theme::of(ui);
+    let p = &theme::PALETTE;
     let box_ = if on { "x" } else { " " };
     let color = if on { p.accent } else { p.weak };
     ui.add(
@@ -357,16 +276,16 @@ fn draw_buttons(app: &mut SleepyApp, ui: &mut Ui) {
             .on_hover_text("start the countdown (or press enter)")
             .clicked()
         {
-            app.controller.arm_selected();
+            app.controller.apply(Command::Arm);
         }
         if ui.add_enabled(armed, egui::Button::new("pause")).clicked() {
-            app.controller.timer.pause();
+            app.controller.apply(Command::PauseResume);
         }
         if ui
             .add_enabled(paused, egui::Button::new("resume"))
             .clicked()
         {
-            app.controller.timer.resume();
+            app.controller.apply(Command::PauseResume);
         }
         if ui
             .add_enabled(counting, egui::Button::new("abort"))
@@ -381,57 +300,34 @@ fn draw_buttons(app: &mut SleepyApp, ui: &mut Ui) {
             .add_enabled(counting, egui::Button::new("-1 min"))
             .clicked()
         {
-            app.controller.timer.adjust(-sleepy_core::NUDGE);
+            app.controller.apply(Command::Shorter);
         }
         if ui
             .add_enabled(counting, egui::Button::new("+1 min"))
             .clicked()
         {
-            app.controller.timer.adjust(sleepy_core::NUDGE);
+            app.controller.apply(Command::Longer);
         }
     });
 }
 
 fn draw_countdown(app: &SleepyApp, ui: &mut Ui) {
-    let p = theme::of(ui);
+    let p = &theme::PALETTE;
     match app.controller.timer.status() {
         Status::Idle => {
-            ui.weak(app.controller.selected_action().map_or_else(
-                || "nothing to arm".to_string(),
-                |mode| format!("press enter to arm the {} countdown", mode.label()),
-            ));
+            ui.weak(app.controller.headline());
         }
         Status::Armed | Status::Paused => {
-            // Whole seconds: a countdown that jitters in microseconds is
-            // noise, not information.
-            let left = format_duration(Duration::from_secs(
-                app.controller.timer.remaining().as_secs(),
-            ))
-            .to_string();
-            let action = app
-                .controller
-                .timer
-                .action()
-                .map_or_else(|| String::from("sleep"), |mode| mode.label().to_lowercase());
-            let headline = if app.controller.timer.status() == Status::Paused {
-                format!("paused, {left} left - press space to resume")
-            } else {
-                match app.controller.deadline() {
-                    // The wall clock answers the question a countdown
-                    // only asks in remainders: when, exactly.
-                    Some(at) => format!("{action} in {left}, at {}", format_clock(at)),
-                    None => format!("{action} in {left}"),
-                }
-            };
-            ui.label(RichText::new(headline).strong().color(p.strong));
+            let left = app.controller.left();
+            ui.label(
+                RichText::new(app.controller.headline())
+                    .strong()
+                    .color(p.strong),
+            );
             ui.add(egui::ProgressBar::new(app.controller.timer.progress()).text(&left));
         }
         Status::Fired => {
-            let action = app.controller.fired.map_or_else(
-                || String::from("sleep the machine"),
-                sleepy_core::SleepAction::firing,
-            );
-            ui.label(RichText::new(format!("time! {action}...")).size(24.0));
+            ui.label(RichText::new(app.controller.headline()).size(24.0));
             if app.controller.backend == Backend::DryRun
                 && let Some(command) = app.controller.fired.and_then(describe)
             {
@@ -445,7 +341,7 @@ fn draw_countdown(app: &SleepyApp, ui: &mut Ui) {
 /// hints. A hint lights up when its command runs and, if it stands for one
 /// command, can be clicked to run it.
 fn render_status(app: &SleepyApp, ui: &mut Ui, typing: bool) -> Option<Command> {
-    let p = theme::of(ui);
+    let p = &theme::PALETTE;
     let now = ui.input(|i| i.time);
     let counting = matches!(
         app.controller.timer.status(),
@@ -511,7 +407,7 @@ fn render_status(app: &SleepyApp, ui: &mut Ui, typing: bool) -> Option<Command> 
 
 /// A clickable key cap followed by its description.
 fn key_hint(ui: &mut Ui, keys: &str, description: &str, pulse: f32, clickable: bool) -> bool {
-    let p = theme::of(ui);
+    let p = &theme::PALETTE;
     let sense = if clickable {
         Sense::CLICK
     } else {

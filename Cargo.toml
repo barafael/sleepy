@@ -18,10 +18,8 @@ crossterm = "0.29"
 eframe = { version = "0.37", default-features = false, features = [
   "glow",
   "default_fonts",
-  "persistence",
 ] }
 egui = "0.37"
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
 humantime = "2.4"
 # the browser's clock and console, for the parts of sleepy that run on wasm
 console_error_panic_hook = "0.1"
@@ -35,7 +33,6 @@ web-time = "1"
 ratatui = "0.30"
 strum = { version = "0.28", features = ["derive"] }
 thiserror = "2"
-zbus = "6.0"
 
 [profile.release]
 opt-level = 3

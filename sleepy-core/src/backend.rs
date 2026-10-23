@@ -23,7 +23,7 @@ pub enum Backend {
 ///
 /// Kept apart from running it so the frontends can promise what is coming
 /// and the tests can check it without sleeping anyone.
-pub fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
+pub(crate) fn command_for(action: SleepAction) -> Option<(String, Vec<String>)> {
     if action == SleepAction::RunScript {
         // The user's own script, run where sleepy runs. Everywhere the
         // file carries its own interpreter, the file *is* the command;

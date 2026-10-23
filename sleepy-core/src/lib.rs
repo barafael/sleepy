@@ -35,11 +35,9 @@ pub mod timer;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
-pub use action::{Probe, SleepAction, detect, detect_with};
-pub use awake::KeepAwake;
-pub use backend::{Backend, Error, describe, execute};
+pub use action::{SleepAction, detect};
+pub use backend::{Backend, describe};
 pub use cli::Options;
 pub use command::Command;
-pub use controller::{Controller, NUDGE};
-pub use input::{ParseError, When, format_clock, is_when_prefix, parse_when};
-pub use timer::{Event as TimerEvent, Status, Timer};
+pub use controller::Controller;
+pub use timer::Status;

@@ -23,7 +23,7 @@ Wake Lock holds the display awake while the page is open.
 |---|---|
 | `sleepy-core` | The library: the command line both frontends share, the controller they drive - arm, pause, toggle, fire - sleep actions, capability detection, the timer, the screen guard, humantime and clock parsing. No terminal, no window - everything here is testable headless. |
 | `sleepy` | The terminal app: ratatui and crossterm, no extra framework. |
-| `sleepy-ui` | The window: eframe and egui, dressed in gruvbox - dark or light, as the desktop prefers. Operable by the terminal's keys or entirely by mouse; remembers its geometry. |
+| `sleepy-ui` | The window: eframe and egui, dressed in gruvbox dark. Operable by the terminal's keys or entirely by mouse. |
 
 ## Usage
 
@@ -75,18 +75,18 @@ script's own failure, not the machine's.
 The dry-run toggle can be flipped at any moment: switching to a dry run
 mid-countdown saves the machine without aborting the timer. `Space` is
 humantime's separator too, so it types while the field is being edited (idle)
-and pauses once a countdown runs. The field takes only what a when could still
-become - `23:`, `30 mi`, `1h3` - and refuses the rest; `k` is a command either
-way, and the field never sees it.
+and pauses once a countdown runs. The field types whatever you give it and
+humantime judges the result: what is no when is said so, in red, below the
+field. `k` is a command either way, and the field never sees it.
 
 ## Keys (window)
 
 The window answers to the same keys, and `Ctrl+D` toggles the dry run even
 while the field has the keyboard, because a text field has no use for the
-chord. While the field is focused it keeps only what a when can wear - space
-types a space, `d` types a `d` - and what no when wears is a command either
-way, as in the terminal: `k` toggles keep-awake, `q` quits, `+` `-` nudge the
-deadline, and characters that complete no when the field simply refuses. `Esc`
+chord. While the field is focused it types whatever you give it - space types
+a space, `d` types a `d` - and humantime's answer shows below it; what sleepy
+keeps for itself is a command either way, as in the terminal: `k` toggles
+keep-awake, `q` quits, `+` `-` nudge the deadline. `Esc`
 leaves the field first, then aborts a countdown, then quits, one press at a
 time.
 Arming - `Enter`, the button, the hint - waits for an idle countdown: a

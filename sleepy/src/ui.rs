@@ -5,7 +5,6 @@
 //! decides anything; it only shows what `App` knows.
 
 use crate::app::App;
-use humantime::format_duration;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
@@ -13,8 +12,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Gauge, List, ListItem, ListState, Paragraph},
 };
-use sleepy_core::{SleepAction, Status, When, format_clock};
-use std::time::Duration;
+use sleepy_core::Status;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let [modes, when, countdown, footer] = Layout::vertical([
@@ -58,16 +56,8 @@ fn draw_when(frame: &mut Frame, app: &App, area: Rect) {
     ));
     match app.controller.when() {
         // The field echoes its own meaning in the grammar it was typed
-        // in: a duration counts off a stretch of time, a clock time
-        // names the moment it walks up to.
-        Ok(When::After(duration)) => frame.render_widget(
-            Paragraph::new(format!("-> in {}", format_duration(duration)).dark_gray()),
-            hint,
-        ),
-        Ok(When::At(time)) => frame.render_widget(
-            Paragraph::new(format!("-> at {}", time.strftime("%H:%M")).dark_gray()),
-            hint,
-        ),
+        // in, in the words both frontends share.
+        Ok(when) => frame.render_widget(Paragraph::new(when.echo().dark_gray()), hint),
         Err(error) => frame.render_widget(Paragraph::new(error.to_string().red()), hint),
     }
 }
@@ -79,55 +69,20 @@ fn draw_countdown(frame: &mut Frame, app: &App, area: Rect) {
         .areas(block.inner(area));
     frame.render_widget(block, area);
     match app.controller.timer.status() {
-        Status::Idle => {
-            let text = app.controller.selected_action().map_or_else(
-                || "this machine offers nothing to arm".to_string(),
-                |action| format!("press enter to arm the {} countdown", action.label()),
-            );
-            frame.render_widget(Paragraph::new(text.dark_gray()), headline);
-        }
+        Status::Idle => frame.render_widget(
+            Paragraph::new(app.controller.headline()).dark_gray(),
+            headline,
+        ),
         Status::Armed | Status::Paused => {
-            // Whole seconds: a countdown that jitters in microseconds is
-            // noise, not information.
-            let left = format_duration(Duration::from_secs(
-                app.controller.timer.remaining().as_secs(),
-            ))
-            .to_string();
-            let action = app
-                .controller
-                .timer
-                .action()
-                .unwrap_or(SleepAction::Suspend)
-                .label()
-                .to_lowercase();
-            let text = if app.controller.timer.status() == Status::Paused {
-                format!("paused, {left} left - press space to resume")
-            } else {
-                match app.controller.deadline() {
-                    // The wall clock answers the question a countdown
-                    // only asks in remainders: when, exactly.
-                    Some(at) => format!("{action} in {left}, at {}", format_clock(at)),
-                    None => format!("{action} in {left}"),
-                }
-            };
-            frame.render_widget(Paragraph::new(text.bold()), headline);
+            frame.render_widget(Paragraph::new(app.controller.headline().bold()), headline);
             let gauge = Gauge::default()
                 .ratio(f64::from(app.controller.timer.progress()))
-                .label(left)
+                .label(app.controller.left())
                 .gauge_style(Style::new().light_yellow());
             frame.render_widget(gauge, bar);
         }
         Status::Fired => {
-            let action = app
-                .controller
-                .timer
-                .action()
-                .unwrap_or(SleepAction::Suspend)
-                .firing();
-            frame.render_widget(
-                Paragraph::new(format!("time! {action}...").bold()),
-                headline,
-            );
+            frame.render_widget(Paragraph::new(app.controller.headline().bold()), headline)
         }
     }
 }
@@ -177,7 +132,7 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
-    use sleepy_core::{Backend, Command, Options};
+    use sleepy_core::{Backend, Command, Options, SleepAction};
 
     /// An app built by hand, so the tests never ask the machine what it
     /// can do (`detect` would spawn processes here).

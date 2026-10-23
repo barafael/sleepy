@@ -1,13 +1,10 @@
-//! Gruvbox, and the flat, dense style that gives the window its character.
+//! Gruvbox dark, and the flat, dense style that gives the window its character.
 //!
-//! One palette family, two variants: gruvbox dark and gruvbox light. Which
-//! one shows is the desktop's choice - egui follows the system preference,
-//! and on Linux the portal watcher in `portal` is what supplies it. There is
-//! no theme picker on purpose: sleepy has one look, and it is gruvbox.
+//! One palette, on purpose: sleepy has one look, and it is gruvbox dark.
+//! egui is pinned to it - winit follows the desktop's light and dark where
+//! it knows them (macOS, Windows), and sleepy declines the invitation.
 
-use egui::{
-    Color32, CornerRadius, FontId, Shadow, Stroke, Style, TextStyle, Theme, ThemePreference, Ui,
-};
+use egui::{Color32, CornerRadius, FontId, Shadow, Stroke, Style, TextStyle, Theme};
 
 /// Semantic colors.
 #[derive(Clone, Copy, Debug)]
@@ -46,8 +43,8 @@ const fn hex(rgb: u32) -> Color32 {
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
-/// Gruvbox dark (hard contrast).
-const DARK: Palette = Palette {
+/// Gruvbox dark (hard contrast): sleepy's one look.
+pub const PALETTE: Palette = Palette {
     bg: hex(0x1d_20_21),
     surface: hex(0x32_30_2f),
     stripe: hex(0x28_28_28),
@@ -64,38 +61,11 @@ const DARK: Palette = Palette {
     yellow: hex(0xfa_bd_2f),
 };
 
-/// Gruvbox light.
-const LIGHT: Palette = Palette {
-    bg: hex(0xfb_f1_c7),
-    surface: hex(0xeb_db_b2),
-    stripe: hex(0xf2_e5_bc),
-    hover: hex(0xd5_c4_a1),
-    border: hex(0xbd_ae_93),
-    text: hex(0x3c_38_36),
-    strong: hex(0x1d_20_21),
-    weak: hex(0x66_5c_54),
-    accent: hex(0xaf_3a_03),
-    on_accent: hex(0xfb_f1_c7),
-    label: hex(0x42_7b_58),
-    green: hex(0x79_74_0e),
-    red: hex(0x9d_00_06),
-    yellow: hex(0xb5_76_14),
-};
-
-/// The palette of whichever variant is showing.
-pub fn of(ui: &Ui) -> &'static Palette {
-    if ui.visuals().dark_mode {
-        &DARK
-    } else {
-        &LIGHT
-    }
-}
-
-/// Installs both variants and asks egui to follow the system.
+/// Installs the palette and pins the window to it, whatever the desktop
+/// prefers.
 pub fn install(ctx: &egui::Context) {
-    ctx.style_mut_of(Theme::Dark, |style| apply(style, &DARK));
-    ctx.style_mut_of(Theme::Light, |style| apply(style, &LIGHT));
-    ctx.set_theme(ThemePreference::System);
+    ctx.style_mut_of(Theme::Dark, |style| apply(style, &PALETTE));
+    ctx.set_theme(Theme::Dark);
 }
 
 /// The flat, dense look: square corners, no shadows, tight rows, and the

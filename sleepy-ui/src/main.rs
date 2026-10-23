@@ -10,10 +10,6 @@
 
 mod app;
 mod command;
-#[cfg(not(target_arch = "wasm32"))]
-mod geometry;
-#[cfg(target_os = "linux")]
-mod portal;
 mod theme;
 mod ui;
 
@@ -35,7 +31,6 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     };
-    let saved = geometry::Geometry::load();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("sleepy")
         .with_app_id("sleepy-ui")
@@ -48,19 +43,13 @@ fn main() -> eframe::Result {
         viewport = viewport.with_icon(icon);
     }
     let native_options = eframe::NativeOptions {
-        viewport: match saved {
-            Some(geometry) => geometry.apply(viewport),
-            None => viewport,
-        },
-        // sleepy restores the window itself; see `geometry`.
-        persist_window: false,
+        viewport,
         ..Default::default()
     };
-    let tracker = geometry::Tracker::new(saved.and_then(|g| g.position));
     eframe::run_native(
         "sleepy-ui",
         native_options,
-        Box::new(move |cc| Ok(Box::new(SleepyApp::new(cc, options).with_window(tracker)))),
+        Box::new(move |cc| Ok(Box::new(SleepyApp::new(cc, options)))),
     )
 }
 

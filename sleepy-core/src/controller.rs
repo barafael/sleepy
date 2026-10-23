@@ -11,9 +11,10 @@ use crate::awake::KeepAwake;
 use crate::backend::{Backend, Error, execute};
 use crate::cli::Options;
 use crate::command::Command;
-use crate::input::{ParseError, When, parse_when};
+use crate::input::{ParseError, When, format_clock, parse_when};
 use crate::timer::{Event as TimerEvent, Status, Timer};
-use std::time::SystemTime;
+use humantime::format_duration;
+use std::time::{Duration, SystemTime};
 use web_time::Instant;
 
 /// The duration offered to a user who types nothing.
@@ -113,21 +114,66 @@ impl Controller {
     ///
     /// # Errors
     ///
-    /// Whatever [`crate::ParseError`] the field earns: empty, unreadable,
+    /// Whatever [`crate::input::ParseError`] the field earns: empty, unreadable,
     /// zero, or a clock time out of range.
     pub fn when(&self) -> Result<When, ParseError> {
         parse_when(&self.input)
     }
 
     /// When the running countdown will end on the wall clock, which the
-    /// frontends show beside the remaining time so `at 23:45` answers
+    /// headline shows beside the remaining time so `at 23:45` answers
     /// "when exactly?" without arithmetic. A paused countdown has no
     /// deadline - it would move with the pause - and an idle one has
     /// nothing to promise.
-    pub fn deadline(&self) -> Option<SystemTime> {
+    pub(crate) fn deadline(&self) -> Option<SystemTime> {
         match self.timer.status() {
             Status::Armed => Some(system_now() + self.timer.remaining()),
             Status::Idle | Status::Paused | Status::Fired => None,
+        }
+    }
+
+    /// The time left, in words and whole seconds: a countdown that
+    /// jitters in microseconds is noise, not information.
+    pub fn left(&self) -> String {
+        format_duration(Duration::from_secs(self.timer.remaining().as_secs())).to_string()
+    }
+
+    /// The countdown's headline, in the words both frontends show: what
+    /// is happening, how much is left, and - while a countdown runs -
+    /// when exactly it ends. The terminal and the window render this and
+    /// reword nothing, so neither can drift into promising something
+    /// the other does not.
+    pub fn headline(&self) -> String {
+        match self.timer.status() {
+            Status::Idle => self.selected_action().map_or_else(
+                || "this machine offers nothing to arm".to_string(),
+                |action| format!("press enter to arm the {} countdown", action.label()),
+            ),
+            Status::Armed | Status::Paused => {
+                let left = self.left();
+                if self.timer.status() == Status::Paused {
+                    format!("paused, {left} left - press space to resume")
+                } else {
+                    // An armed countdown always carries its mode; the
+                    // fallback is the grammar's own safety net, naming
+                    // no mode the machine might not have.
+                    let action = self
+                        .timer
+                        .action()
+                        .map_or_else(|| String::from("sleep"), |mode| mode.label().to_lowercase());
+                    match self.deadline() {
+                        // The wall clock answers the question a countdown
+                        // only asks in remainders: when, exactly.
+                        Some(at) => format!("{action} in {left}, at {}", format_clock(at)),
+                        None => format!("{action} in {left}"),
+                    }
+                }
+            }
+            Status::Fired => format!(
+                "time! {}...",
+                self.fired
+                    .map_or_else(|| String::from("sleep the machine"), SleepAction::firing)
+            ),
         }
     }
 

@@ -2,10 +2,9 @@
 //!
 //! The state and the commands live in sleepy-core's `Controller`, shared
 //! with the terminal so the two cannot drift apart; this adds only what is
-//! the window's own: the clicked key hints, the field focus, the theme and
-//! the geometry. The countdown still needs a heartbeat: egui only repaints
-//! when asked, and a window nobody is looking at must still fall asleep on
-//! time.
+//! the window's own: the clicked key hints and the field focus. The
+//! countdown still needs a heartbeat: egui only repaints when asked, and a
+//! window nobody is looking at must still fall asleep on time.
 
 use crate::command;
 use sleepy_core::{Command, Controller, Options, Status};
@@ -25,14 +24,8 @@ pub struct SleepyApp {
     /// Until the duration field has been focused once: like the terminal,
     /// where the keystrokes go to the field from the first frame.
     pub focus_field: bool,
-    /// For saving settings, which happens outside a frame.
+    /// For timing the key pulses.
     ctx: egui::Context,
-    /// The desktop's light/dark preference.
-    #[cfg(target_os = "linux")]
-    system_theme: crate::portal::SystemTheme,
-    /// Saves the window's size and position; a browser tab has none.
-    #[cfg(not(target_arch = "wasm32"))]
-    window: Option<crate::geometry::Tracker>,
 }
 
 impl SleepyApp {
@@ -45,18 +38,7 @@ impl SleepyApp {
             pressed: None,
             focus_field: true,
             ctx: cc.egui_ctx.clone(),
-            #[cfg(target_os = "linux")]
-            system_theme: crate::portal::SystemTheme::watch(cc.egui_ctx.clone()),
-            #[cfg(not(target_arch = "wasm32"))]
-            window: None,
         }
-    }
-
-    /// Remembers the window's geometry between runs.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_window(mut self, tracker: crate::geometry::Tracker) -> Self {
-        self.window = Some(tracker);
-        self
     }
 
     /// Runs one command, from a key press or a clicked key hint, and notes
@@ -77,24 +59,6 @@ impl SleepyApp {
 }
 
 impl eframe::App for SleepyApp {
-    /// Remembers the window's geometry. Not in eframe's storage: the
-    /// geometry tracker writes its own file, where the terminal sleepy's
-    /// settings already live and where the `XWayland` shift can be undone.
-    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(window) = &self.window {
-            window.save(&self.ctx);
-        }
-    }
-
-    /// Supplies the system theme where winit does not know it.
-    #[cfg(target_os = "linux")]
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if raw_input.system_theme.is_none() {
-            raw_input.system_theme = self.system_theme.get();
-        }
-    }
-
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // egui only calls back when asked; a countdown must ask for its
         // own heartbeat. `logic` runs even while the window is hidden, so
@@ -122,10 +86,6 @@ impl eframe::App for SleepyApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(window) = &mut self.window {
-            window.observe(&ctx);
-        }
         let typing = ctx.memory(|m| m.focused() == Some(crate::ui::field_id()));
         for command in command::take(&ctx, typing) {
             if command == Command::Escape && typing {

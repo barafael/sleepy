@@ -149,11 +149,6 @@ impl Timer {
         self.remaining
     }
 
-    /// The duration armed with.
-    pub fn total(&self) -> Duration {
-        self.total
-    }
-
     /// How much of the countdown has passed, for a progress bar.
     pub fn progress(&self) -> f32 {
         if self.total.is_zero() {
@@ -211,7 +206,7 @@ mod tests {
         assert_eq!(timer.status(), Status::Armed);
         assert_eq!(timer.action(), Some(Suspend));
         assert_eq!(timer.remaining(), Duration::from_secs(60));
-        assert_eq!(timer.total(), Duration::from_secs(60));
+        assert_eq!(timer.total, Duration::from_secs(60));
     }
 
     #[test]

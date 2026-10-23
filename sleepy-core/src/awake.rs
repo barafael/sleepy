@@ -61,11 +61,6 @@ impl KeepAwake {
             let _ = child.wait();
         }
     }
-
-    /// Whether the screen is being held awake right now.
-    pub fn active(&self) -> bool {
-        self.child.is_some()
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -119,39 +114,30 @@ fn helper() -> Option<Command> {
 }
 
 /// The screen-awake wish, held or not.
+/// The screen-awake inhibition, held or not. On the web there is nothing
+/// to hold: `web` keeps the Wake Lock while it is wanted, so sleepy's
+/// side is only the promise to let go.
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Default)]
-pub struct KeepAwake {
-    /// Whether the countdown wants the screen; the Wake Lock itself is
-    /// the browser's to hand out, and `web` keeps it while it is wanted.
-    want: bool,
-}
+pub struct KeepAwake;
 
 #[cfg(target_arch = "wasm32")]
 impl KeepAwake {
     /// An inhibition nobody is holding.
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 
     /// Asks the browser to keep the screen awake, from now until `stop`.
     /// A browser that will not grant the lock is a shrug, not a veto:
     /// the countdown goes on and the screen may still blank.
     pub fn start(&mut self) {
-        self.want = true;
         crate::web::hold_screen(true);
     }
 
     /// Lets go: the Wake Lock is released and the screen may blank again.
     pub fn stop(&mut self) {
-        self.want = false;
         crate::web::hold_screen(false);
-    }
-
-    /// Whether the screen is being held awake right now - which on the
-    /// web means "wanted": the browser may still blank a hidden page.
-    pub fn active(&self) -> bool {
-        self.want
     }
 }
 
@@ -172,7 +158,7 @@ mod tests {
     fn letting_go_of_nothing_is_quiet() {
         let mut awake = KeepAwake::new();
         awake.stop();
-        assert!(!awake.active());
+        assert!(awake.child.is_none());
     }
 
     #[test]
@@ -184,7 +170,7 @@ mod tests {
         awake.start();
         awake.start();
         awake.stop();
-        assert!(!awake.active());
+        assert!(awake.child.is_none());
     }
 
     #[cfg(target_os = "linux")]

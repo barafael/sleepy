@@ -40,7 +40,7 @@ impl Options {
         help: &str,
         version: &str,
     ) -> Result<Option<Self>, String> {
-        Self::parse_with(args, help, version, crate::detect)
+        Self::parse_with(args, help, version, crate::action::detect)
     }
 
     /// A hand-written parser, with `detect` a parameter so the tests never

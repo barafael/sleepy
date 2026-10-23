@@ -51,12 +51,11 @@ impl Hint {
 
 /// Takes this frame's key presses, as commands.
 ///
-/// The field keeps only what a when could still wear: the digits, the
-/// unit letters, space - `d` is one at all times, and the terminal
-/// affords the same. What no when wears - `k`, `q`, `+`, `-` - and what
-/// a text field has no use for at all - the arrows, enter, escape,
-/// Ctrl+D - the window takes either way, and consumes what it takes so
-/// the field never sees it.
+/// The field types whatever the window does not keep. What sleepy holds
+/// for itself at any moment - `k`, `q`, `+`, `-`, and the Ctrl+D chord -
+/// and what a text field has no use for at all - the arrows, enter,
+/// escape - the window takes even while the field has the keyboard, and
+/// consumes what it takes so the field never sees it.
 pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
     let mut commands = Vec::new();
     ctx.input_mut(|i| {
@@ -74,8 +73,8 @@ pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
         // mid-countdown, and no text field has a use for Ctrl+D, so it
         // is a command while typing too - leaving plain `d` to type.
         press(egui::Modifiers::CTRL, egui::Key::D, Command::ToggleDryRun);
-        // What no when can wear is a command at any moment, here as in
-        // the terminal: `q` quits, `+` and `-` nudge the deadline.
+        // What sleepy keeps for itself is a command at any moment, here
+        // as in the terminal: `q` quits, `+` and `-` nudge the deadline.
         press(none, egui::Key::Q, Command::Quit);
         // The numpad's + and - arrive as Plus and Minus: egui folds
         // the keypad variants into the same logical keys. And the
@@ -90,7 +89,7 @@ pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
         if !typing {
             press(none, egui::Key::Space, Command::PauseResume);
         }
-        // `k` is no when's letter, so it toggles at any moment. And a
+        // `k` is sleepy's own, so it toggles at any moment. And a
         // focused field reads the text events a press also sends, not
         // the key itself: consume_key alone would still let it type,
         // so the text goes with the command.
@@ -159,15 +158,15 @@ mod tests {
     }
 
     #[test]
-    fn typing_keeps_only_what_a_when_can_wear() {
+    fn what_sleepy_keeps_is_a_command_while_typing_too() {
         // The field's characters stay out of the command queue...
         for key in [egui::Key::D, egui::Key::Space] {
             assert_eq!(take(&pressed(key), true), Vec::new(), "{key:?}");
         }
         // ...and `d` is a letter even when the field is not focused.
         assert_eq!(take(&pressed(egui::Key::D), false), Vec::new());
-        // What no when wears is a command either way: `k` toggles and
-        // `q` quits even while the field has the keyboard.
+        // What sleepy keeps for itself is a command either way: `k`
+        // toggles and `q` quits even while the field has the keyboard.
         for (key, command) in [
             (egui::Key::K, Command::ToggleKeepAwake),
             (egui::Key::Q, Command::Quit),
