@@ -137,7 +137,7 @@ pub(crate) fn hold_screen(want: bool) {
         if want && screen.held.is_none() {
             hold();
         } else if !want {
-            release(&mut screen);
+            screen.release();
         }
     });
 }
@@ -179,14 +179,14 @@ fn hold() {
     });
 }
 
-/// Lets go of the held lock, if there is one.
-fn release(screen: &mut Screen) {
-    if let Some(sentinel) = screen.held.take() {
-        screen.let_go(sentinel);
-    }
-}
-
 impl Screen {
+    /// Lets go of the held lock, if there is one.
+    fn release(&mut self) {
+        if let Some(sentinel) = self.held.take() {
+            self.let_go(sentinel);
+        }
+    }
+
     /// Hands a sentinel back to the browser. The release promise has
     /// nothing left to say - the lock is the browser's again either
     /// way, and a lock the browser already took back says so quietly.

@@ -30,7 +30,10 @@ web-sys = "0.3"
 # std's Instant and SystemTime panic on wasm; here they are std's own
 # everywhere else, and the browser's clock where std has none
 web-time = "1"
-ratatui = "0.30"
+# sleepy draws the widgets that are always on: the defaults would add a
+# calendar and the time crate behind it, layout macros the screen never
+# calls, and a cache for a layout of four blocks.
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "std"] }
 strum = { version = "0.28", features = ["derive"] }
 thiserror = "2"
 

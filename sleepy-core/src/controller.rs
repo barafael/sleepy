@@ -126,10 +126,7 @@ impl Controller {
     /// deadline - it would move with the pause - and an idle one has
     /// nothing to promise.
     pub(crate) fn deadline(&self) -> Option<SystemTime> {
-        match self.timer.status() {
-            Status::Armed => Some(system_now() + self.timer.remaining()),
-            Status::Idle | Status::Paused | Status::Fired => None,
-        }
+        (self.timer.status() == Status::Armed).then(|| system_now() + self.timer.remaining())
     }
 
     /// The time left, in words and whole seconds: a countdown that
@@ -149,24 +146,22 @@ impl Controller {
                 || "this machine offers nothing to arm".to_string(),
                 |action| format!("press enter to arm the {} countdown", action.label()),
             ),
-            Status::Armed | Status::Paused => {
-                let left = self.left();
-                if self.timer.status() == Status::Paused {
-                    format!("paused, {left} left - press space to resume")
-                } else {
-                    // An armed countdown always carries its mode; the
-                    // fallback is the grammar's own safety net, naming
-                    // no mode the machine might not have.
-                    let action = self
-                        .timer
-                        .action()
-                        .map_or_else(|| String::from("sleep"), |mode| mode.label().to_lowercase());
-                    match self.deadline() {
-                        // The wall clock answers the question a countdown
-                        // only asks in remainders: when, exactly.
-                        Some(at) => format!("{action} in {left}, at {}", format_clock(at)),
-                        None => format!("{action} in {left}"),
-                    }
+            // Paused says so; armed answers when, the question a
+            // countdown only asks in remainders.
+            Status::Paused => {
+                format!("paused, {} left - press space to resume", self.left())
+            }
+            Status::Armed => {
+                // An armed countdown always carries its mode; the
+                // fallback is the grammar's own safety net, naming
+                // no mode the machine might not have.
+                let action = self
+                    .timer
+                    .action()
+                    .map_or_else(|| String::from("sleep"), |mode| mode.label().to_lowercase());
+                match self.deadline() {
+                    Some(at) => format!("{action} in {}, at {}", self.left(), format_clock(at)),
+                    None => format!("{} in {}", action, self.left()),
                 }
             }
             Status::Fired => format!(
@@ -327,12 +322,17 @@ mod tests {
     /// A controller built by hand, so the tests never ask the machine what
     /// it can do (`detect` would spawn processes here).
     fn controller() -> Controller {
+        controller_with(vec![SleepAction::Suspend])
+    }
+
+    /// The same, offering the given modes.
+    fn controller_with(modes: Vec<SleepAction>) -> Controller {
         Controller::new(Options {
             backend: Backend::Real,
             keep_screen_on: false,
             when: None,
             mode: None,
-            modes: vec![SleepAction::Suspend],
+            modes,
         })
     }
 
@@ -396,13 +396,7 @@ mod tests {
 
     #[test]
     fn selection_wraps_at_both_ends() {
-        let mut controller = Controller::new(Options {
-            backend: Backend::Real,
-            keep_screen_on: false,
-            when: None,
-            mode: None,
-            modes: vec![SleepAction::Suspend, SleepAction::Hibernate],
-        });
+        let mut controller = controller_with(vec![SleepAction::Suspend, SleepAction::Hibernate]);
         controller.move_selection(-1);
         assert_eq!(controller.selected, 1);
         controller.move_selection(1);

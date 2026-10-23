@@ -36,9 +36,9 @@ impl When {
     /// How long from `now` until this comes around. A clock time means
     /// the next one to come: `23:45` typed at ten is tonight, typed at
     /// five to midnight tomorrow night.
-    pub fn duration_from(&self, now: SystemTime) -> Duration {
+    pub fn duration_from(self, now: SystemTime) -> Duration {
         match self {
-            When::After(duration) => *duration,
+            When::After(duration) => duration,
             When::At(time) => {
                 // Only a clock outside the years jiff can name falls
                 // short here; a machine that cannot read its own clock
@@ -48,7 +48,7 @@ impl When {
                     return Duration::ZERO;
                 };
                 let now = now.to_zoned(TimeZone::system());
-                let delta = now.duration_until(&next_occurrence(*time, &now));
+                let delta = now.duration_until(&next_occurrence(time, &now));
                 // Whole seconds, rounded up: a countdown that sleeps at
                 // 23:44:59.5 has fallen asleep before its time.
                 match delta.as_nanos() {

@@ -75,6 +75,13 @@ fn shown(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// Wait for the terminal to say `wanted`, and fail naming what seeing it
+/// proves.
+fn assert_said(output: &Output, wanted: &[u8], promise: &str, patience: Duration) {
+    let bytes = until_said(output, wanted, patience);
+    assert!(seen(output, wanted), "{promise}:\n{}", shown(&bytes));
+}
+
 /// The exit, polled in slices: a sleepy that never leaves is a failed
 /// test, not a hung one.
 fn wait_for_exit(child: &mut Box<dyn Child + Send + Sync>) -> ExitStatus {
@@ -93,36 +100,36 @@ fn a_dry_run_takes_the_screen_and_gives_it_back() {
     let (_master, mut child, output) = sleepy(&["2s", "--dry-run"]);
     // The alternate screen: the sequence every terminal knows, so the
     // shell's scrollback survives sleepy's art.
-    let bytes = until_said(&output, b"[?1049h", Duration::from_secs(15));
-    assert!(
-        seen(&output, b"[?1049h"),
-        "no alternate screen:\n{}",
-        shown(&bytes)
+    assert_said(
+        &output,
+        b"[?1049h",
+        "no alternate screen",
+        Duration::from_secs(15),
     );
     // The armed headline: a countdown that names its deadline, which
     // is what a typed clock time promises and a duration earns.
-    let bytes = until_said(&output, b", at ", Duration::from_secs(15));
-    assert!(
-        seen(&output, b", at "),
-        "no deadline on the headline:\n{}",
-        shown(&bytes)
+    assert_said(
+        &output,
+        b", at ",
+        "no deadline on the headline",
+        Duration::from_secs(15),
     );
     // Two seconds and a tick later, the dry run fires without sleeping,
     // reports, and leaves.
     assert!(wait_for_exit(&mut child).success());
-    let bytes = until_said(&output, b"would have run:", Duration::from_secs(5));
-    assert!(
-        seen(&output, b"would have run:"),
-        "no dry-run report:\n{}",
-        shown(&bytes)
+    assert_said(
+        &output,
+        b"would have run:",
+        "no dry-run report",
+        Duration::from_secs(5),
     );
     // And the shell's screen comes back: the leave-sequence, the last
     // promise the guard keeps.
-    let bytes = until_said(&output, b"[?1049l", Duration::from_secs(5));
-    assert!(
-        seen(&output, b"[?1049l"),
-        "screen never restored:\n{}",
-        shown(&bytes)
+    assert_said(
+        &output,
+        b"[?1049l",
+        "screen never restored",
+        Duration::from_secs(5),
     );
 }
 
@@ -133,16 +140,15 @@ fn a_typed_q_leaves_the_screen_clean() {
     // The key names are bold and the words plain, so the styles split
     // "ctrl+d" from " dry run" with escape codes - the words are the
     // contiguous part to look for.
-    let bytes = until_said(&output, b"dry run", Duration::from_secs(15));
-    assert!(seen(&output, b"dry run"), "no footer:\n{}", shown(&bytes));
+    assert_said(&output, b"dry run", "no footer", Duration::from_secs(15));
     let mut writer = master.take_writer().unwrap();
     writer.write_all(b"q").unwrap();
     writer.flush().unwrap();
     assert!(wait_for_exit(&mut child).success());
-    let bytes = until_said(&output, b"[?1049l", Duration::from_secs(5));
-    assert!(
-        seen(&output, b"[?1049l"),
-        "screen never restored:\n{}",
-        shown(&bytes)
+    assert_said(
+        &output,
+        b"[?1049l",
+        "screen never restored",
+        Duration::from_secs(5),
     );
 }

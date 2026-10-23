@@ -113,7 +113,6 @@ fn helper() -> Option<Command> {
     }
 }
 
-/// The screen-awake wish, held or not.
 /// The screen-awake inhibition, held or not. On the web there is nothing
 /// to hold: `web` keeps the Wake Lock while it is wanted, so sleepy's
 /// side is only the promise to let go.
