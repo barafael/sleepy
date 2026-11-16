@@ -17,7 +17,7 @@
 
 use humantime::format_duration;
 use jiff::{
-    Timestamp, ToSpan, Zoned,
+    Timestamp, ToSpan, ZonedDateTime,
     civil::{DateTime, Time},
     tz::{AmbiguousOffset, TimeZone},
 };
@@ -47,7 +47,7 @@ impl When {
                 let Ok(now) = Timestamp::try_from(now) else {
                     return Duration::ZERO;
                 };
-                let now = now.to_zoned(TimeZone::system());
+                let now = now.to_zoned_datetime(TimeZone::system());
                 let delta = now.duration_until(&next_occurrence(time, &now));
                 // Whole seconds, rounded up: a countdown that sleeps at
                 // 23:44:59.5 has fallen asleep before its time.
@@ -132,7 +132,7 @@ fn parse_clock(text: &str) -> Option<Time> {
 
 /// The next instant strictly after `now` at which the wall clock reads
 /// `target`.
-fn next_occurrence(target: Time, now: &Zoned) -> Zoned {
+fn next_occurrence(target: Time, now: &ZonedDateTime) -> ZonedDateTime {
     let zone = now.time_zone();
     // Today if it has not gone by, tomorrow if it has; the third day
     // is for the spring-forward night that skips the time itself.
@@ -140,7 +140,7 @@ fn next_occurrence(target: Time, now: &Zoned) -> Zoned {
         let Ok(day) = now.date().checked_add(offset.days()) else {
             continue;
         };
-        let ambiguous = zone.to_ambiguous_zoned(DateTime::from_parts(day, target));
+        let ambiguous = zone.to_ambiguous_zoned_datetime(DateTime::from_parts(day, target));
         let on_the_clock = match ambiguous.offset() {
             AmbiguousOffset::Unambiguous { .. } => ambiguous.earlier().ok(),
             // Autumn turns one clock time into two: sleep at the first
@@ -176,7 +176,7 @@ pub fn format_clock(at: SystemTime) -> String {
     Timestamp::try_from(at).map_or_else(
         |_| String::new(),
         |at| {
-            at.to_zoned(TimeZone::system())
+            at.to_zoned_datetime(TimeZone::system())
                 .strftime("%H:%M")
                 .to_string()
         },
@@ -259,12 +259,12 @@ mod tests {
     /// A `now` built by hand: today at `hour:minute`, in whatever zone
     /// the machine lives. The answers below hold in every zone on every
     /// day, because no zone skips a midday hour.
-    fn today_at(hour: i8, minute: i8) -> Zoned {
-        let today = Zoned::now().date();
+    fn today_at(hour: i8, minute: i8) -> ZonedDateTime {
+        let today = ZonedDateTime::now().date();
         // No zone skips a midday hour, so the instant is unambiguous
         // and `earlier` is it.
         TimeZone::system()
-            .to_ambiguous_zoned(today.at(hour, minute, 0, 0))
+            .to_ambiguous_zoned_datetime(today.at(hour, minute, 0, 0))
             .earlier()
             .unwrap()
     }
@@ -291,12 +291,12 @@ mod tests {
         // Rounded up to the second, so the wall clock really reads the
         // target when the countdown ends - never a second before.
         let now = SystemTime::now();
-        let target = Zoned::now().checked_add(3.hours()).unwrap();
+        let target = ZonedDateTime::now().checked_add(3.hours()).unwrap();
         let time = civil::time(target.time().hour(), target.time().minute(), 0, 0);
         let duration = When::At(time).duration_from(now);
         let at = Timestamp::try_from(now + duration)
             .unwrap()
-            .to_zoned(TimeZone::system());
+            .to_zoned_datetime(TimeZone::system());
         assert_eq!(
             at.strftime("%H:%M").to_string(),
             time.strftime("%H:%M").to_string()
