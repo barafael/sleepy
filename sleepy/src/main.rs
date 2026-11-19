@@ -59,13 +59,14 @@ options:
       --dry-run         count down for real, but only say what would run
                         (ctrl+d toggles it while sleepy runs)
       --keep-screen-on  hold off screen blanking while the countdown runs
-                        (k toggles it)
+                        (ctrl+k toggles it)
   -h, --help            print this help
   -V, --version         print sleepy's name and version
 
-keys: ctrl+d dry run, k keep awake, enter arms, space pauses, esc aborts,
-      +/- a minute, q quits
-      d is always a letter (2d, 30 min); space types while the timer is idle";
+keys: ctrl+d dry run, ctrl+k keep awake, enter arms, space pauses,
+      esc aborts, +/- a minute, q quits
+      d and k are always letters (2d, 2k, 30 min); space types while the
+      timer is idle";
 
 /// What `-V` prints: the crate's own name and version, kept true by
 /// the build rather than by memory.

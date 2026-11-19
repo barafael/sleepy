@@ -10,7 +10,10 @@
 use crate::app::SleepyApp;
 use crate::command;
 use crate::theme;
-use egui::{Align, Color32, CursorIcon, Label, Layout, Response, RichText, Sense, TextStyle, Ui};
+use egui::{
+    Align, Color32, CursorIcon, Label, Layout, Response, RichText, Sense, TextFormat, TextStyle,
+    Ui, text::LayoutJob,
+};
 use sleepy_core::{Backend, Command, Status, describe};
 
 /// Horizontal gap between unrelated items.
@@ -174,7 +177,8 @@ fn draw_modes(app: &mut SleepyApp, ui: &mut Ui) {
                 ui.add(Label::new(text).sense(Sense::CLICK).selectable(false))
             })
             .inner
-            .on_hover_cursor(CursorIcon::PointingHand);
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text(action.help());
         if row.hovered() && !selected {
             ui.painter().hline(
                 row.rect.x_range(),
@@ -185,6 +189,13 @@ fn draw_modes(app: &mut SleepyApp, ui: &mut Ui) {
         if row.clicked() {
             app.controller.selected = index;
         }
+    }
+    // The chosen mode explains itself under the list, as the terminal
+    // says it under its highlight; the tooltips carry the same words for
+    // the modes not yet chosen.
+    if let Some(action) = app.controller.selected_action() {
+        ui.add_space(4.0);
+        ui.label(RichText::new(action.help()).italics().small().color(p.weak));
     }
 }
 
@@ -337,9 +348,11 @@ fn draw_countdown(app: &SleepyApp, ui: &mut Ui) {
     }
 }
 
-/// The status bar: the open typing, the standing warnings, and the key
-/// hints. A hint lights up when its command runs and, if it stands for one
-/// command, can be clicked to run it.
+/// The status bar: what is going on above what the keys do. The field's
+/// echo and the standing warnings are states, not commands; keeping them
+/// off the hints leaves the hotkey area to the hotkeys alone. A hint
+/// lights up when its command runs and, if it stands for one command,
+/// can be clicked to run it.
 fn render_status(app: &SleepyApp, ui: &mut Ui, typing: bool) -> Option<Command> {
     let p = &theme::PALETTE;
     let now = ui.input(|i| i.time);
@@ -351,37 +364,52 @@ fn render_status(app: &SleepyApp, ui: &mut Ui, typing: bool) -> Option<Command> 
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(GAP as i8, 4))
         .show(ui, |ui| {
-            if let Some(error) = &app.controller.failure {
-                ui.label(RichText::new(error.to_string()).color(p.red).strong());
+            // The state: the open field and the warnings that stand until
+            // their toggle is turned off. Drawn only when there is some:
+            // even an empty row takes a row's height.
+            let has_state = app.controller.failure.is_some()
+                || typing
+                || app.controller.backend == Backend::DryRun
+                || app.controller.keep_screen_on;
+            if has_state {
+                ui.horizontal_wrapped(|ui| {
+                    if let Some(error) = &app.controller.failure {
+                        ui.label(RichText::new(error.to_string()).color(p.red).strong());
+                        ui.add_space(GAP);
+                    }
+                    // The field, echoed while it has the keyboard, so the
+                    // window shows what is being typed rather than left to
+                    // the imagination.
+                    if typing {
+                        ui.label(RichText::new("typing:").color(p.label));
+                        ui.label(
+                            RichText::new(format!(" {}▏ ", app.controller.input))
+                                .monospace()
+                                .color(p.on_accent)
+                                .background_color(p.accent),
+                        );
+                        ui.add_space(GAP * 2.0);
+                    }
+                    if app.controller.backend == Backend::DryRun {
+                        ui.label(
+                            RichText::new(" DRY RUN: the machine stays awake ")
+                                .strong()
+                                .color(p.yellow),
+                        );
+                    }
+                    if app.controller.keep_screen_on {
+                        ui.label(
+                            RichText::new(" keeping the screen awake ")
+                                .strong()
+                                .color(p.green),
+                        );
+                    }
+                });
+                ui.add_space(2.0);
             }
+            // The keys: one indivisible unit per hint, however narrow the
+            // window gets. Wrapping never splits a keycap from its words.
             ui.horizontal_wrapped(|ui| {
-                // The field, echoed while it has the keyboard, so the
-                // window shows what is being typed rather than left to
-                // the imagination.
-                if typing {
-                    ui.label(RichText::new("typing:").color(p.label));
-                    ui.label(
-                        RichText::new(format!(" {}▏ ", app.controller.input))
-                            .monospace()
-                            .color(p.on_accent)
-                            .background_color(p.accent),
-                    );
-                    ui.add_space(GAP * 2.0);
-                }
-                if app.controller.backend == Backend::DryRun {
-                    ui.label(
-                        RichText::new(" DRY RUN: the machine stays awake ")
-                            .strong()
-                            .color(p.yellow),
-                    );
-                }
-                if app.controller.keep_screen_on {
-                    ui.label(
-                        RichText::new(" keeping the screen awake ")
-                            .strong()
-                            .color(p.green),
-                    );
-                }
                 for hint in command::Hint::all(counting) {
                     let pulse = app
                         .pressed
@@ -405,7 +433,37 @@ fn render_status(app: &SleepyApp, ui: &mut Ui, typing: bool) -> Option<Command> 
     clicked
 }
 
-/// A clickable key cap followed by its description.
+/// The keycap and its words as one layout job, with an unbounded width:
+/// one row, so the wrapping row below can only break *between* hints.
+fn hint_job(ui: &Ui, keys: &str, description: &str, pulse: f32) -> LayoutJob {
+    let p = &theme::PALETTE;
+    let mut job = LayoutJob::default();
+    job.append(
+        &format!(" {keys} "),
+        0.0,
+        TextFormat {
+            font_id: TextStyle::Monospace.resolve(ui.style()),
+            color: p.accent.lerp_to_gamma(p.on_accent, pulse),
+            background: p.hover.lerp_to_gamma(p.accent, pulse),
+            valign: ui.text_valign(),
+            ..Default::default()
+        },
+    );
+    job.append(
+        description,
+        ui.spacing().item_spacing.x,
+        TextFormat {
+            color: p.text,
+            valign: ui.text_valign(),
+            ..Default::default()
+        },
+    );
+    job
+}
+
+/// One hint: a keycap and its words, drawn as a single label so a narrow
+/// row breaks between hints and never inside one. The whole hint is also
+/// the click target, standing in for the key it names.
 fn key_hint(ui: &mut Ui, keys: &str, description: &str, pulse: f32, clickable: bool) -> bool {
     let p = &theme::PALETTE;
     let sense = if clickable {
@@ -413,26 +471,46 @@ fn key_hint(ui: &mut Ui, keys: &str, description: &str, pulse: f32, clickable: b
     } else {
         Sense::hover()
     };
-    let key = ui.add(
-        Label::new(
-            RichText::new(format!(" {keys} "))
-                .monospace()
-                .color(p.accent.lerp_to_gamma(p.on_accent, pulse))
-                .background_color(p.hover.lerp_to_gamma(p.accent, pulse)),
-        )
-        .sense(sense),
-    );
-    let text = ui.add(Label::new(RichText::new(description).color(p.text)).sense(sense));
+    let hint = hint_label(ui, keys, description, pulse, sense);
     if clickable {
-        if key.hovered() || text.hovered() {
+        if hint.hovered() {
             ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
             ui.painter().hline(
-                text.rect.x_range(),
-                text.rect.bottom() - 1.0,
+                hint.rect.x_range(),
+                hint.rect.bottom() - 1.0,
                 egui::Stroke::new(1.0, p.text),
             );
         }
-        return key.clicked() || text.clicked();
+        return hint.clicked();
     }
     false
+}
+
+/// The hint's label: extended, never wrapped, so it is laid out as one
+/// row whatever width is left.
+fn hint_label(ui: &mut Ui, keys: &str, description: &str, pulse: f32, sense: Sense) -> Response {
+    let job = hint_job(ui, keys, description, pulse);
+    ui.add(Label::new(job).sense(sense).selectable(false).extend())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hint_is_one_unbreakable_unit() {
+        egui::__run_test_ui(|ui| {
+            let job = hint_job(ui, "ctrl+k", "keep awake", 0.0);
+            assert_eq!(job.text, " ctrl+k keep awake");
+            assert_eq!(job.sections.len(), 2);
+            // Squeezed far narrower than it is, the hint still lays out as
+            // one row, overflowing rather than breaking: the wrapping row
+            // can break before or after the hint, not in it.
+            let row = ui.text_style_height(&TextStyle::Monospace);
+            ui.set_max_width(20.0);
+            let hint = hint_label(ui, "ctrl+k", "keep awake", 0.0, Sense::hover());
+            assert!(hint.rect.width() > 20.0, "{:?}", hint.rect);
+            assert!(hint.rect.height() < row * 1.5, "{:?}", hint.rect);
+        });
+    }
 }

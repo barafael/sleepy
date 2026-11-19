@@ -70,6 +70,23 @@ impl SleepAction {
         }
     }
 
+    /// The one-line explanation of what the mode does, for a human
+    /// choosing one: both frontends show it dim and italic beside the
+    /// list, where a name like "hybrid sleep" earns a sentence.
+    ///
+    /// A match beside `label` for the same reason: this is display copy.
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Suspend => "sleeps now, wakes fast; the machine must hold power",
+            Self::Hibernate => "memory to disk, power off; slow to wake, survives anything",
+            Self::HybridSleep => "RAM and disk; wakes fast, survives power loss",
+            Self::SuspendThenHibernate => "suspends now, hibernates if the nap runs long",
+            Self::Shutdown => "powers off; waking up means booting again",
+            Self::RunScript => "runs the script left in this directory, then nothing sleeps",
+            Self::Notify => "sends a notification; a browser tab cannot sleep its machine",
+        }
+    }
+
     /// The words a finished countdown shows after "time!": what is being
     /// done, to what.
     ///
@@ -316,6 +333,15 @@ mod tests {
                 "notify"
             ]
         );
+    }
+
+    #[test]
+    fn every_action_explains_itself() {
+        // The help line is the only place a chooser learns what
+        // "hybrid sleep" means; an empty one would render as silence.
+        for action in SleepAction::iter() {
+            assert!(!action.help().is_empty(), "{action} has no help");
+        }
     }
 
     #[test]

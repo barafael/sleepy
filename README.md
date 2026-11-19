@@ -64,7 +64,7 @@ script's own failure, not the machine's.
 | typing | edit the when field: `30 min` or `23:45` |
 | `Up` `Down` `Tab` | pick the mode |
 | `Ctrl+D` | toggle the dry run: talk about sleeping, do nothing |
-| `k` | toggle keep-awake: the screen stays on while it counts |
+| `Ctrl+K` | toggle keep-awake: the screen stays on while it counts |
 | `Enter` | arm the countdown |
 | `Space` | pause, and pause again to resume |
 | `+` `-` | stretch or shrink the deadline by a minute |
@@ -77,18 +77,20 @@ mid-countdown saves the machine without aborting the timer. `Space` is
 humantime's separator too, so it types while the field is being edited (idle)
 and pauses once a countdown runs. The field types whatever you give it and
 humantime judges the result: what is no when is said so, in red, below the
-field. `k` is a command either way, and the field never sees it.
+field. The two toggles are chords: `Ctrl+D` and `Ctrl+K` are commands
+either way, and the field sees neither; plain `d` and `k` are letters.
 
 ## Keys (window)
 
-The window answers to the same keys, and `Ctrl+D` toggles the dry run even
-while the field has the keyboard, because a text field has no use for the
-chord. While the field is focused it types whatever you give it - space types
-a space, `d` types a `d` - and humantime's answer shows below it; what sleepy
-keeps for itself is a command either way, as in the terminal: `k` toggles
-keep-awake, `q` quits, `+` `-` nudge the deadline. `Esc`
-leaves the field first, then aborts a countdown, then quits, one press at a
-time.
+The window answers to the same keys, and `Ctrl+D` and `Ctrl+K` toggle the
+dry run and keep-awake even while the field has the keyboard: sleepy takes
+both chords before the field sees them, so `Ctrl+K` toggles keep-awake
+rather than deleting to the end of the line. While the field is focused it types
+whatever you give it - space types a space, `d` types a `d`, `k` types a `k`
+- and humantime's answer shows below it; what sleepy keeps for itself is a
+command either way, as in the terminal: `q` quits, `+` `-` nudge the
+deadline. `Esc` leaves the field first, then aborts a countdown, then quits,
+one press at a time.
 Arming - `Enter`, the button, the hint - waits for an idle countdown: a
 running one is never silently replaced. The status bar shows the keys as the
 terminal's footer does, and each hint that stands for a single command can

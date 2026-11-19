@@ -25,9 +25,10 @@ fn command(key: KeyEvent, idle: bool) -> Option<Command> {
         // aborting the timer - so it rides on a chord no text field
         // has a use for, leaving plain `d` to type: `2d` needs it.
         KeyCode::Char('d') if ctrl => Some(Command::ToggleDryRun),
-        // `k` keeps the screen awake; it is sleepy's key at any moment,
-        // here and in the window, and the field never sees it.
-        KeyCode::Char('k') if !ctrl => Some(Command::ToggleKeepAwake),
+        // Ctrl+K keeps the screen awake, the chord paired with Ctrl+D
+        // the way the two toggles are paired everywhere else: it works
+        // at any moment, and plain `k` stays a letter for the field.
+        KeyCode::Char('k') if ctrl => Some(Command::ToggleKeepAwake),
         KeyCode::Esc if !ctrl => Some(Command::Escape),
         KeyCode::Up | KeyCode::BackTab if !ctrl => Some(Command::PreviousMode),
         KeyCode::Down | KeyCode::Tab if !ctrl => Some(Command::NextMode),
@@ -184,13 +185,34 @@ mod tests {
     }
 
     #[test]
-    fn k_is_a_command_even_while_typing() {
+    fn ctrl_k_toggles_keep_screen_on_at_any_moment() {
+        let mut app = app();
+        let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        app.on_key(ctrl_k);
+        assert!(app.controller.keep_screen_on);
+        // The safety valve's twin: mid-countdown too, without aborting
+        // the timer, and the field never sees the chord.
+        let field = app.controller.input.clone();
+        assert!(app.controller.arm_selected());
+        app.on_key(ctrl_k);
+        assert!(!app.controller.keep_screen_on);
+        assert_eq!(app.controller.timer.status(), Status::Armed);
+        assert_eq!(app.controller.input, field);
+    }
+
+    #[test]
+    fn k_is_a_letter() {
         let mut app = app();
         app.controller.input.clear();
         app.on_key(press(KeyCode::Char('k')));
-        assert!(app.controller.keep_screen_on);
-        // The field never saw the key: `k` is a command at any moment.
-        assert_eq!(app.controller.input, "");
+        assert_eq!(app.controller.input, "k");
+        assert!(!app.controller.keep_screen_on);
+        // Even a running countdown does not turn `k` into a command.
+        app.controller.input = "45s".into();
+        assert!(app.controller.arm_selected());
+        app.on_key(press(KeyCode::Char('k')));
+        assert!(!app.controller.keep_screen_on);
+        assert_eq!(app.controller.timer.status(), Status::Armed);
     }
 
     #[test]

@@ -33,7 +33,7 @@ impl Hint {
         [
             hint("up/down", "mode", None),
             hint("ctrl+d", "dry run", Some(Command::ToggleDryRun)),
-            hint("k", "keep awake", Some(Command::ToggleKeepAwake)),
+            hint("ctrl+k", "keep awake", Some(Command::ToggleKeepAwake)),
             // Arming waits for an idle countdown, so while one runs the
             // hint stands for nothing a click could do.
             hint("enter", "arm", (!counting).then_some(Command::Arm)),
@@ -52,10 +52,10 @@ impl Hint {
 /// Takes this frame's key presses, as commands.
 ///
 /// The field types whatever the window does not keep. What sleepy holds
-/// for itself at any moment - `k`, `q`, `+`, `-`, and the Ctrl+D chord -
-/// and what a text field has no use for at all - the arrows, enter,
-/// escape - the window takes even while the field has the keyboard, and
-/// consumes what it takes so the field never sees it.
+/// for itself at any moment - `q`, `+`, `-`, and the Ctrl+D and Ctrl+K
+/// chords - and what a text field has no use for at all - the arrows,
+/// enter, escape - the window takes even while the field has the
+/// keyboard, and consumes what it takes so the field never sees it.
 pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
     let mut commands = Vec::new();
     ctx.input_mut(|i| {
@@ -73,6 +73,15 @@ pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
         // mid-countdown, and no text field has a use for Ctrl+D, so it
         // is a command while typing too - leaving plain `d` to type.
         press(egui::Modifiers::CTRL, egui::Key::D, Command::ToggleDryRun);
+        // Its paired chord holds the screen awake on the same terms:
+        // Ctrl+K at any moment, plain `k` left for the field to type.
+        // egui's field would read Ctrl+K as "delete to the end of the
+        // line"; sleepy takes the chord first, so the field never does.
+        press(
+            egui::Modifiers::CTRL,
+            egui::Key::K,
+            Command::ToggleKeepAwake,
+        );
         // What sleepy keeps for itself is a command at any moment, here
         // as in the terminal: `q` quits, `+` and `-` nudge the deadline.
         press(none, egui::Key::Q, Command::Quit);
@@ -88,16 +97,6 @@ pub fn take(ctx: &egui::Context, typing: bool) -> Vec<Command> {
         // edited it types; once the field is done with it, it pauses.
         if !typing {
             press(none, egui::Key::Space, Command::PauseResume);
-        }
-        // `k` is sleepy's own, so it toggles at any moment. And a
-        // focused field reads the text events a press also sends, not
-        // the key itself: consume_key alone would still let it type,
-        // so the text goes with the command.
-        if i.consume_key(none, egui::Key::K) {
-            i.events.retain(
-                |event| !matches!(event, egui::Event::Text(text) if text.contains(['k', 'K'])),
-            );
-            commands.push(Command::ToggleKeepAwake);
         }
     });
     commands
@@ -132,7 +131,6 @@ mod tests {
     #[test]
     fn keys_become_commands() {
         let cases = [
-            (egui::Key::K, Command::ToggleKeepAwake),
             (egui::Key::Q, Command::Quit),
             (egui::Key::Space, Command::PauseResume),
             (egui::Key::Enter, Command::Arm),
@@ -145,10 +143,14 @@ mod tests {
         for (key, command) in cases {
             assert_eq!(take(&pressed(key), false), vec![command], "{key:?}");
         }
-        // The dry run rides on the chord, not the letter.
+        // Both toggles ride on their chord, not on the letter.
         assert_eq!(
             take(&pressed_with(egui::Key::D, Modifiers::CTRL), false),
             vec![Command::ToggleDryRun]
+        );
+        assert_eq!(
+            take(&pressed_with(egui::Key::K, Modifiers::CTRL), false),
+            vec![Command::ToggleKeepAwake]
         );
         // The main row's + is a shifted equals, and nudges the same.
         assert_eq!(
@@ -160,15 +162,16 @@ mod tests {
     #[test]
     fn what_sleepy_keeps_is_a_command_while_typing_too() {
         // The field's characters stay out of the command queue...
-        for key in [egui::Key::D, egui::Key::Space] {
+        for key in [egui::Key::D, egui::Key::K, egui::Key::Space] {
             assert_eq!(take(&pressed(key), true), Vec::new(), "{key:?}");
         }
-        // ...and `d` is a letter even when the field is not focused.
-        assert_eq!(take(&pressed(egui::Key::D), false), Vec::new());
-        // What sleepy keeps for itself is a command either way: `k`
-        // toggles and `q` quits even while the field has the keyboard.
+        // ...and `d` and `k` are letters even when the field is unfocused.
+        for key in [egui::Key::D, egui::Key::K] {
+            assert_eq!(take(&pressed(key), false), Vec::new(), "{key:?}");
+        }
+        // What sleepy keeps for itself is a command either way: `q`
+        // quits and the nudges nudge even while the field has the keyboard.
         for (key, command) in [
-            (egui::Key::K, Command::ToggleKeepAwake),
             (egui::Key::Q, Command::Quit),
             (egui::Key::Minus, Command::Shorter),
             (egui::Key::Equals, Command::Longer),
@@ -179,33 +182,35 @@ mod tests {
         for key in [egui::Key::ArrowUp, egui::Key::Enter, egui::Key::Escape] {
             assert_eq!(take(&pressed(key), true).len(), 1, "{key:?}");
         }
-        // Ctrl+D is a safety valve: taken while typing too.
+        // Both chords are safety valves: taken while typing too.
         assert_eq!(
             take(&pressed_with(egui::Key::D, Modifiers::CTRL), true),
             vec![Command::ToggleDryRun]
         );
+        assert_eq!(
+            take(&pressed_with(egui::Key::K, Modifiers::CTRL), true),
+            vec![Command::ToggleKeepAwake]
+        );
     }
 
     #[test]
-    fn the_toggle_leaves_no_letter_behind() {
-        // A press sends a focused field a key event *and* a text
-        // event; taking `k` as a command must take both, or the field
-        // types what the window just toggled.
-        let ctx = egui::Context::default();
-        ctx.input_mut(|i| {
-            i.events.push(Event::Key {
-                key: egui::Key::K,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: Modifiers::NONE,
-            });
-            i.events.push(Event::Text("k".into()));
-        });
+    fn ctrl_k_takes_the_chord_and_leaves_the_letter() {
+        // Plain `k` belongs to the field: its key press is not spent.
+        let ctx = pressed(egui::Key::K);
+        assert_eq!(take(&ctx, true), Vec::new());
+        assert!(ctx.input(|i| i.key_pressed(egui::Key::K)));
+        // The chord belongs to sleepy: the field never sees it either.
+        let ctx = pressed_with(egui::Key::K, Modifiers::CTRL);
         assert_eq!(take(&ctx, true), vec![Command::ToggleKeepAwake]);
         assert!(
-            ctx.input(|i| i.events.iter().all(|e| !matches!(e, Event::Text(_)))),
-            "the field must not type what the window toggled"
+            ctx.input(|i| i.events.clone()).iter().all(|e| !matches!(
+                e,
+                Event::Key {
+                    key: egui::Key::K,
+                    ..
+                }
+            )),
+            "the field must not see the chord"
         );
     }
 
@@ -239,7 +244,7 @@ mod tests {
             assert_eq!(
                 keys,
                 [
-                    "up/down", "ctrl+d", "k", "enter", "space", "esc", "+/-", "q"
+                    "up/down", "ctrl+d", "ctrl+k", "enter", "space", "esc", "+/-", "q"
                 ]
             );
             for hint in hints {

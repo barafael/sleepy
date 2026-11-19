@@ -59,7 +59,7 @@ fn main() -> eframe::Result {
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
     console_error_panic_hook::set_once();
-    keep_ctrl_d();
+    keep_chords();
     // The browser grants notifications once per site and remembers; ask
     // at the moment the page is freshest, where whoever came to be told
     // "time" in thirty minutes means to be told. Browsers that wait for
@@ -112,13 +112,13 @@ fn report(document: &Option<web_sys::Document>, message: &str) {
     }
 }
 
-/// Ctrl+D is sleepy's dry-run toggle and the browser's bookmark chord;
-/// while the page has the keys, the page answers it. eframe leaves
-/// this chord to the browser, so the page keeps its own counsel: the
-/// bookmark dialog would open over a countdown the user was only
-/// trying to mark dry.
+/// Ctrl+D and Ctrl+K are sleepy's paired toggles and the browser's own
+/// chords: bookmark and search. While the page has the keys, the page
+/// answers them. eframe leaves these chords to the browser, so the page
+/// keeps its own counsel: a bookmark dialog or the address bar would
+/// open over a countdown the user was only trying to toggle.
 #[cfg(target_arch = "wasm32")]
-fn keep_ctrl_d() {
+fn keep_chords() {
     use eframe::wasm_bindgen::JsCast as _;
     use eframe::wasm_bindgen::closure::Closure;
     let Some(window) = web_sys::window() else {
@@ -127,7 +127,7 @@ fn keep_ctrl_d() {
     let keep = Closure::wrap(Box::new(|event: web_sys::KeyboardEvent| {
         if event.ctrl_key()
             && !(event.shift_key() || event.alt_key() || event.meta_key())
-            && event.key().eq_ignore_ascii_case("d")
+            && matches!(event.key().to_ascii_lowercase().as_str(), "d" | "k")
         {
             event.prevent_default();
         }
@@ -137,7 +137,7 @@ fn keep_ctrl_d() {
         .is_ok()
     {
         // The watcher lives as long as the page, which is as long as
-        // the chord needs an answer.
+        // the chords need an answer.
         keep.forget();
     }
 }
